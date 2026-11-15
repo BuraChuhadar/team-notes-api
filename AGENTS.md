@@ -25,13 +25,13 @@
 - `DATABASE_URL` is required. Do not add a SQLite fallback or automatic `.env` loading.
 - Docker Compose provides local PostgreSQL; its named volume is outside Git.
 - Dockerfile builds the API image; Docker Compose runs the API and database.
-- The schema includes users, teams, memberships, notes, and authentication sessions.
+- The schema includes users, teams, memberships, notes, note shares, and sessions.
 - Registration, login, current-user lookup, and logout are implemented under
   `/auth`. Note creation, listing, reading, updates, and deletion are implemented
   under `/notes`.
-- Personal notes are owner-only unless explicitly shared read-only. Source-team
-  access requires current membership, including for the original creator; removal
-  revokes that source access. Independent recipient grants remain read-only.
+- Personal notes are owner-only unless shared read-only. Source-team rights
+  require current membership, including for the original creator; removing that
+  membership revokes those rights. An independent recipient grant may retain read access.
 - Team creation, listing, and membership routes are implemented under `/teams`.
   Only owners can add or remove members; all members can view their roster.
   Outsiders receive `404`. Create teams and owner memberships atomically; reject
@@ -42,6 +42,7 @@
   mutate team notes. Preserve ownership and team assignment during saves.
 - Note lists support optional trimmed literal search with `q` (1–200 characters).
   Apply current read permissions and search before stable, bounded pagination.
+- Read-only grants extend read access only; keep `writable_to` independent.
 - Passwords use Argon2id; opaque bearer tokens are stored only as SHA-256 hashes.
   Sessions expire after one hour and logout revokes the current token.
 
@@ -69,7 +70,7 @@ Docker Compose builds the test image and supplies an isolated test database and
 `TEST_DATABASE_URL`; reviewers need no host Python or manual database setup.
 Development dependencies belong in `requirements-dev.txt`, outside the runtime
 image. The test container runs dependency validation, Ruff, Pyright, and tests.
-For host checks, run `python -m pip check`, `python -m ruff check app tests`, and
+For host checks, run `python -m pip check`, `python -m ruff check app tests scripts`, and
 `python -m pyright`. Keep the shared Python 3.11 target and deprecated-API errors
 in `pyproject.toml`; fix warnings instead of suppressing them.
 
@@ -85,8 +86,33 @@ in `pyproject.toml`; fix warnings instead of suppressing them.
   developer data in tests. The Compose test profile supplies a dedicated test
   database with no published host port.
 - Add explicit Alembic Python revisions when changing the schema. Preserve the
-  transactional migration runner, advisory lock, and revision checks.
+  transactional migration runner, advisory lock, revision checks, and adoption
+  of validated legacy `schema_migrations` history.
 - Do not modify applied migration files; add a new migration for later changes.
+- Keep schema migrations in Python Alembic revisions. Compatibility tests should
+  reconstruct earlier schemas using those revisions, without separate `.sql` files.
+- Preserve any earlier local SQLite database files; importing their data is a
+  separate task.
+
+## REST and OpenAPI
+
+- Preserve the documented resource paths and existing JSON payload shapes.
+- Give every operation an explicit stable `operation_id`, summary, description,
+  and tag. Describe request/response fields and constraints with Pydantic metadata.
+- Use `app/api_contract.py` for shared error/validation schemas and response
+  headers. Document actual success and failure statuses on each route, including
+  `401`, applicable permission/not-found/conflict errors, sanitized `422`, and `500`.
+- Protected operations use `BearerAuth` and document `WWW-Authenticate: Bearer` on
+  `401`; private response status definitions include `Cache-Control: no-store`.
+- Keep `204` responses bodyless. Add `Location` to `201` only when a canonical
+  retrievable resource exists, and document the header accurately.
+- Bound collection reads with `limit` 1–100 (default 50) and nonnegative BIGINT
+  `offset` (default 0). Filter permissions before pagination and document ordering.
+  Empty authorized pages return `[]`; an inaccessible parent still returns `404`.
+- Preserve safe JSON errors and validation issues containing only `type`, `loc`,
+  and `msg`. Never expose submitted passwords, database internals, or tracebacks.
+- Run the OpenAPI/HTTP contract tests with the integration suite. Keep generated
+  documentation synchronized when adding routes, parameters, schemas, or errors.
 
 ## Verification
 
@@ -125,3 +151,14 @@ revocation after removal, owner protection, and atomic team creation.
 - Evaluate access before versions, search, or pagination. Return `404` for
   inaccessible resources and do not duplicate notes shared through several teams.
 - Sharing changes do not increment the content version or update timestamp.
+
+## End-to-end verification
+
+- `scripts/demo.py` uses only the standard library and runs inside the API image.
+  Verify the full HTTP flow with `docker compose exec -T api python scripts/demo.py`.
+- Keep passwords and bearer tokens out of demo output. Use unique accounts on each
+  run; document which demo records remain in the selected database.
+- Preserve Docker-only setup. Include demo scripts in the image and static checks.
+- Verify a fresh Compose project and volume; use alternate `API_PORT` and
+  `POSTGRES_PORT` values when the development stack is running. Remove only the
+  disposable verification project's volume afterward.

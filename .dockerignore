@@ -8,6 +8,8 @@
 !app/**
 !tests/
 !tests/**
+!scripts/
+!scripts/**
 **/__pycache__/
 **/*.py[cod]
 **/.env

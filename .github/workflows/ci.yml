@@ -30,6 +30,9 @@ jobs:
           curl --fail --silent --show-error --output /dev/null http://127.0.0.1:8000/openapi.json
           test "$(docker compose exec -T api id -u)" -ne 0
 
+      - name: Run the complete HTTP collaboration demo
+        run: docker compose exec -T api python scripts/demo.py
+
       - name: Show service logs on failure
         if: failure()
         run: docker compose --profile test logs --no-color

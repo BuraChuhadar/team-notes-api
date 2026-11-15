@@ -10,6 +10,7 @@ RUN python -m pip install --no-cache-dir -r requirements.txt
 RUN useradd --create-home --uid 10001 app
 
 COPY --chown=app:app app ./app
+COPY --chown=app:app scripts ./scripts
 USER app
 
 EXPOSE 8000
@@ -27,6 +28,6 @@ COPY pyproject.toml .
 COPY --chown=app:app tests ./tests
 USER app
 HEALTHCHECK NONE
-CMD ["sh", "-c", "python -m pip check && python -m ruff check --no-cache app tests && python -m pyright && python -W error::DeprecationWarning -W error::PendingDeprecationWarning -m unittest discover -s tests -v"]
+CMD ["sh", "-c", "python -m pip check && python -m ruff check --no-cache app tests scripts && python -m pyright && python -W error::DeprecationWarning -W error::PendingDeprecationWarning -m unittest discover -s tests -v"]
 
 FROM runtime AS production
