@@ -246,13 +246,152 @@ class MigrationTests(PostgreSQLTestCase):
                     for name in inspector.get_table_names()
                 }
 
+        def data_rows() -> dict[str, list[tuple[object, ...]]]:
+            with database.get_engine().connect() as connection:
+                inspector = inspect(connection)
+                rows = {}
+                for name in inspector.get_table_names():
+                    # Snapshot data without reconstructing deliberately malformed
+                    # constraints through SQLAlchemy's schema reflection.
+                    source = table(
+                        name,
+                        *[column(item["name"]) for item in inspector.get_columns(name)],
+                    )
+                    primary_key = inspector.get_pk_constraint(name)[
+                        "constrained_columns"
+                    ]
+                    rows[name] = [
+                        tuple(row)
+                        for row in connection.execute(
+                            select(source).order_by(
+                                *(source.c[key] for key in primary_key)
+                            )
+                        )
+                    ]
+                return rows
+
         before = schema_shape()
+        before_rows = data_rows()
         with self.assertRaisesRegex(
             RuntimeError, "Legacy schema does not match declared version"
         ):
             database.init_database()
         self.assertIsNone(self.current_revision())
         self.assertEqual(schema_shape(), before)
+        self.assertEqual(data_rows(), before_rows)
+
+    def seed_legacy_note(self) -> tuple[int, int]:
+        user_id, team_id = self.seed_user_and_team()
+        with database.get_engine().begin() as connection:
+            notes = Table("notes", MetaData(), autoload_with=connection)
+            connection.execute(
+                notes.insert().values(owner_id=user_id, title="Preserved legacy note")
+            )
+        return user_id, team_id
+
+    def test_legacy_schema_with_additional_false_check_is_not_adopted(self) -> None:
+        self.install_legacy_schema(2)
+        _, team_id = self.seed_legacy_note()
+        with database.get_engine().begin() as connection:
+            teams = Table("teams", MetaData(), autoload_with=connection)
+            connection.execute(teams.delete().where(teams.c.id == team_id))
+            Operations(MigrationContext.configure(connection)).create_check_constraint(
+                "teams_block_writes", "teams", literal(False)
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_with_additional_unique_constraint_is_not_adopted(
+        self,
+    ) -> None:
+        self.install_legacy_schema(2)
+        self.seed_legacy_note()
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).create_unique_constraint(
+                "teams_name_unique", "teams", ["name"]
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_with_additional_unique_index_is_not_adopted(self) -> None:
+        self.install_legacy_schema(2)
+        self.seed_legacy_note()
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).create_index(
+                "teams_name_unique_idx", "teams", ["name"], unique=True
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_with_exclusion_constraint_is_not_adopted(self) -> None:
+        self.install_legacy_schema(2)
+        self.seed_legacy_note()
+        with database.get_engine().begin() as connection:
+            Operations(
+                MigrationContext.configure(connection)
+            ).create_exclude_constraint(
+                "teams_name_exclusion", "teams", ("name", "="), using="btree"
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_unvalidated_legacy_check_does_not_authorize_existing_bad_rows(
+        self,
+    ) -> None:
+        self.install_legacy_schema(2)
+        user_id, _ = self.seed_legacy_note()
+        with database.get_engine().begin() as connection:
+            operations = Operations(MigrationContext.configure(connection))
+            operations.drop_constraint("notes_title_check", "notes", type_="check")
+            notes = Table("notes", MetaData(), autoload_with=connection)
+            connection.execute(notes.insert().values(owner_id=user_id, title=""))
+            operations.create_check_constraint(
+                "notes_title_check",
+                "notes",
+                func.length(func.btrim(column("title"))) > 0,
+                postgresql_not_valid=True,
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_unvalidated_legacy_foreign_key_does_not_authorize_existing_orphans(
+        self,
+    ) -> None:
+        self.install_legacy_schema(2)
+        self.seed_legacy_note()
+        with database.get_engine().begin() as connection:
+            operations = Operations(MigrationContext.configure(connection))
+            operations.drop_constraint(
+                "notes_owner_id_fkey", "notes", type_="foreignkey"
+            )
+            notes = Table("notes", MetaData(), autoload_with=connection)
+            connection.execute(
+                notes.insert().values(owner_id=999999999, title="Existing orphan")
+            )
+            operations.create_foreign_key(
+                "notes_owner_id_fkey",
+                "notes",
+                "users",
+                ["owner_id"],
+                ["id"],
+                ondelete="RESTRICT",
+                postgresql_not_valid=True,
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_harmless_nonunique_legacy_index_is_preserved_during_adoption(self) -> None:
+        self.install_legacy_schema(2)
+        self.seed_legacy_note()
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).create_index(
+                "teams_name_lookup_idx", "teams", ["name"]
+            )
+        database.init_database()
+        self.assertEqual(self.current_revision(), LATEST_REVISION)
+        with database.get_session() as session:
+            self.assertEqual(
+                session.scalars(select(Note.title)).one(), "Preserved legacy note"
+            )
+        with database.get_engine().connect() as connection:
+            self.assertIn(
+                "teams_name_lookup_idx",
+                {index["name"] for index in inspect(connection).get_indexes("teams")},
+            )
 
     def test_legacy_schema_with_missing_sessions_is_not_stamped(self) -> None:
         self.install_legacy_schema(2)

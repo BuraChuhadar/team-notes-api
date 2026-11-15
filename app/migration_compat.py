@@ -13,6 +13,7 @@ from alembic.script.revision import RevisionError
 from alembic.util import CommandError
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -24,6 +25,7 @@ from sqlalchemy import (
     func,
     inspect,
     select,
+    table,
 )
 from sqlalchemy.engine import Connection
 
@@ -147,6 +149,27 @@ _LATER_INDEXES = frozenset(
         "notes_content_trgm_idx",
     }
 )
+_CONSTRAINTS = table(
+    "pg_constraint",
+    column("conname", Text),
+    column("contype", Text),
+    column("convalidated", Boolean),
+    column("conrelid", Integer),
+    schema="pg_catalog",
+)
+_RELATIONS = table(
+    "pg_class",
+    column("oid", Integer),
+    column("relname", Text),
+    column("relnamespace", Integer),
+    schema="pg_catalog",
+)
+_NAMESPACES = table(
+    "pg_namespace",
+    column("oid", Integer),
+    column("nspname", Text),
+    schema="pg_catalog",
+)
 
 
 def migration_chain(scripts: ScriptDirectory) -> tuple[str, ...]:
@@ -239,6 +262,30 @@ def validate_legacy_schema(connection: Connection, version: int) -> None:
 
     if APPLICATION_TABLES.intersection(present_tables) != expected_tables:
         reject("application tables differ")
+    # Inspector does not expose FK validation state. Read only constraints on
+    # these historical tables in the effective application schema, never repair
+    # them or assume an unvalidated constraint covered existing data.
+    constraint_states = connection.execute(
+        select(
+            _RELATIONS.c.relname,
+            _CONSTRAINTS.c.conname,
+            _CONSTRAINTS.c.contype,
+            _CONSTRAINTS.c.convalidated,
+        )
+        .select_from(
+            _CONSTRAINTS.join(
+                _RELATIONS, _CONSTRAINTS.c.conrelid == _RELATIONS.c.oid
+            ).join(_NAMESPACES, _RELATIONS.c.relnamespace == _NAMESPACES.c.oid)
+        )
+        .where(
+            _NAMESPACES.c.nspname == schema, _RELATIONS.c.relname.in_(expected_tables)
+        )
+    )
+    for table_name, constraint_name, kind, validated in constraint_states:
+        if kind in {"u", "x"}:
+            reject(f"{table_name} has unexpected uniqueness or exclusion constraints")
+        if kind in {"c", "f"} and not validated:
+            reject(f"{table_name} constraint {constraint_name} is not validated")
     for name in sorted(expected_tables):
         columns = inspector.get_columns(name)
         actual_columns = {}
@@ -294,6 +341,14 @@ def validate_legacy_schema(connection: Connection, version: int) -> None:
         indexes = {index["name"]: index for index in inspector.get_indexes(name)}
         if _LATER_INDEXES.intersection(indexes):
             reject(f"{name} has indexes from a later revision")
+        expected_unique_indexes = {
+            index_name for index_name, (_, unique) in _INDEXES[name].items() if unique
+        }
+        if any(
+            index["unique"] and index_name not in expected_unique_indexes
+            for index_name, index in indexes.items()
+        ):
+            reject(f"{name} has an unexpected unique index")
         for index_name, (column_names, unique) in _INDEXES[name].items():
             index = indexes.get(index_name)
             if index is None or (tuple(index["column_names"]), index["unique"]) != (
@@ -313,6 +368,8 @@ def validate_legacy_schema(connection: Connection, version: int) -> None:
             check["name"]: check["sqltext"]
             for check in inspector.get_check_constraints(name)
         }
+        if set(checks) != set(_CHECKS[name]):
+            reject(f"{name} check constraints differ")
         for check_name, definition in _CHECKS[name].items():
             if checks.get(check_name) != definition:
                 reject(f"{name} required check {check_name} differs")
