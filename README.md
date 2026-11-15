@@ -2,9 +2,9 @@
 
 A FastAPI REST service for a note-taking product shared across teams.
 
-The service includes authentication, a health endpoint, and PostgreSQL
-persistence through typed SQLAlchemy models and Alembic migrations. Team
-management and note endpoints will follow in focused increments.
+The service includes authentication, team and membership management, a health
+endpoint, and PostgreSQL persistence through typed SQLAlchemy models and Alembic
+migrations. Note endpoints will follow in focused increments.
 
 ## Run locally
 
@@ -35,6 +35,11 @@ Expected: HTTP `200 OK` with `{"status":"ok"}`.
 | POST | `/auth/login` | Create a one-hour bearer session |
 | GET | `/auth/me` | Get the authenticated user |
 | POST | `/auth/logout` | Revoke the current session |
+| POST | `/teams` | Create a team and become its owner |
+| GET | `/teams` | List teams the caller belongs to |
+| GET | `/teams/{team_id}/members` | View a team roster as a member |
+| POST | `/teams/{team_id}/members` | Add a registered user as a member (owner only) |
+| DELETE | `/teams/{team_id}/members/{user_id}` | Remove a member (owner only) |
 
 The health endpoint reports process liveness; it does not query the database.
 
@@ -75,6 +80,71 @@ Passwords are hashed with Argon2id through Pwdlib. Session tokens are random,
 expire after one hour, and are stored only as SHA-256 hashes. These are revocable
 database sessions, with no JWT or signing-secret configuration. Authentication
 responses use `Cache-Control: no-store`.
+
+### Log out when finished
+
+```sh
+curl -i -X POST http://127.0.0.1:8000/auth/logout \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Logout returns an empty `204` response and immediately revokes that token;
+using it afterward returns `401`.
+
+### Teams and membership
+
+All team routes require a valid bearer session. A team and its creator's `owner`
+membership are saved in one transaction. Team names are stripped and must contain
+1–100 characters; duplicate names are allowed. `GET /teams` returns an array of
+`id`, `name`, `created_at`, and the caller's `role`, ordered by team ID. It only
+returns teams the caller belongs to.
+
+```sh
+curl -i http://127.0.0.1:8000/teams \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Engineering"}'
+
+curl -i http://127.0.0.1:8000/teams \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Use the returned team ID and another registered user's ID below. User IDs are
+returned during registration and by `/auth/me`; there is no public user directory.
+Keep the owner's token in `TOKEN` for membership changes:
+
+```sh
+TEAM_ID=1    # Replace with the created team's id.
+MEMBER_ID=2  # Replace with the registered user's id.
+
+curl -i http://127.0.0.1:8000/teams/$TEAM_ID/members \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"user_id\":$MEMBER_ID}"
+
+curl -i http://127.0.0.1:8000/teams/$TEAM_ID/members \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -i -X DELETE http://127.0.0.1:8000/teams/$TEAM_ID/members/$MEMBER_ID \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Adding a member returns `201` with `user_id`, `display_name`, `role`, and
+`created_at`. Any team member can view the roster, ordered by user ID; it contains
+those same fields and excludes account email addresses and credentials. Removing
+a member returns an empty `204` response and immediately removes their team and
+roster visibility. Membership in other teams is unaffected.
+
+Only owners can add or remove members (`403` for ordinary members). Missing teams
+and teams the caller does not belong to both return `404`; this prevents team
+existence or member information from being disclosed to outsiders. Adding an
+unknown user or removing a missing member returns `404`. Adding an existing
+member returns `409`. Owners cannot be removed or demoted (`409`), preserving
+team ownership; ownership transfer and member self-service are not implemented.
+The API always adds the `member` role and rejects client-supplied roles. Unknown
+fields, invalid names, and invalid IDs return `422`. IDs must be positive
+PostgreSQL BIGINT values; JSON `user_id` must be an integer, not a boolean or a
+string. Team responses, including errors, use `Cache-Control: no-store`.
 
 ### Log out when finished
 
@@ -208,8 +278,10 @@ app/
   migrations/       # Versioned Alembic Python revisions
   models.py         # Typed SQLAlchemy database models
   security.py       # Password hashing and token helpers
+  teams.py          # Team and owner-managed membership routes
 tests/
   test_auth.py      # Authentication HTTP integration tests
+  test_teams.py     # Team authorization and membership integration tests
   test_database.py  # Connection and persistence behavior tests
   test_migrations.py # Migration behavior tests
 AGENTS.md           # Development instructions
@@ -263,7 +335,7 @@ These decisions describe implemented behavior; planned extensions are below.
 
 ## What I would change, add, or stop with more time
 
-The planned core still includes team management and note CRUD.
+The planned core still includes note CRUD and sharing.
 Beyond that core, I would prioritize:
 
 - **Change:** Tune connection-pool sizing and indexes when measured traffic and

@@ -7,6 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.auth import router as auth_router
+from app.teams import router as teams_router
 from app.database import get_engine, init_database
 
 
@@ -27,6 +28,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(auth_router)
+app.include_router(teams_router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -46,7 +48,7 @@ async def prevent_auth_caching(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
     response = await call_next(request)
-    if request.url.path.startswith("/auth/"):
+    if request.url.path.startswith(("/auth/", "/teams/")) or request.url.path == "/teams":
         response.headers["Cache-Control"] = "no-store"
     return response
 
