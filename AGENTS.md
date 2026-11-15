@@ -18,7 +18,7 @@
 
 ## Project
 
-- This is an development project with a one-command laptop setup and portable cloud
+- The project has a one-command local setup and portable cloud
   deployment. Keep capacity settings adjustable and distinguish measured laptop
   results from production guarantees. Deployment details live in `deploy/README.md`.
 - Python 3.11+, FastAPI, SQLAlchemy 2.1, Alembic, PostgreSQL, and Psycopg 3.
@@ -50,6 +50,11 @@
   Sessions expire after one hour and logout revokes the current token.
 
 ## Commands
+
+The quick-start command is `docker compose run --build --rm demo`. Preserve its
+fresh-clone behavior: dependencies become healthy, migrations run, and the demo
+creates its own credentials and exercises the API. No prior login or `.env` setup
+is required.
 
 Run from the repository root:
 
@@ -146,7 +151,7 @@ to version 1 without changing their content, ownership, or timestamps.
 Team changes should cover cross-team isolation, owner-only mutations, immediate
 revocation after removal, owner protection, and atomic team creation.
 
-## Project requirements
+## Documentation requirements
 
 - Include all application source code and tests, plus reproducible setup and test
   commands in README.md.

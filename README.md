@@ -7,6 +7,22 @@ and deletion, revocable read-only sharing, and permission-aware search. It runs
 with Docker and PostgreSQL, uses typed SQLAlchemy models and Alembic migrations,
 and publishes a generated OpenAPI reference.
 
+## Quick start
+
+With Docker and Docker Compose running, execute this single command from the
+cloned repository:
+
+```sh
+docker compose run --build --rm demo
+```
+
+It builds and starts PostgreSQL and the API, applies migrations, then runs the
+complete demonstration with automatically created accounts and bearer sessions.
+Successful checks print `OK` and finish with `Demo passed`; any failed check exits
+with an error. No `.env`, existing account, token, or cloud configuration is needed.
+The API remains available at [Swagger UI](http://127.0.0.1:8000/docs) afterward.
+This creates demo records in the local database; see the demo details below.
+
 ## Architecture
 
 The default Docker Compose deployment runs one API service and one PostgreSQL
@@ -472,10 +488,13 @@ and `NOTES_DB_PATH` is no longer used.
 
 ## Production safeguards and measurement
 
-These safeguards are implemented for the development project and can be exercised
+These safeguards are implemented and can be exercised
 on the laptop. Cloud deployment uses the same image and API behavior; the manifests
 require an external PostgreSQL service and real deployment secrets. Capacity and
 high-availability objectives still require measurements in the chosen environment.
+
+The demonstration gateway and example NGINX ingress allow request bodies up to
+2 MiB, including maximum-length Unicode notes serialized with JSON escapes.
 
 ### Database limits and release operations
 
@@ -611,7 +630,7 @@ python3 -m scripts.load_test --duration 15 --rate 50 --concurrency 16 \
 
 Use `--keep-stack` only when inspecting the disposable dataset afterward; the
 command prints its unique project name for explicit cleanup. Local observations
-are evidence for the development, not a cloud requests-per-second guarantee.
+describe the local environment; cloud capacity requires separate measurement.
 
 A measured laptop run used 10,000 notes, eight users, two API replicas, a 15-second
 window and a target of 50 requests/second: 750/750 requests returned `200`, with
@@ -646,15 +665,15 @@ python -m scripts.backup_restore restore --archive work/notes.dump --db-containe
 python -m scripts.backup_restore compare
 ```
 
-The comparison is intended for a quiesced development/test dataset; it checks table
+The comparison is intended for a quiesced test dataset; it checks table
 row counts and canonical row fingerprints without printing row contents. Actual
 production recovery should additionally define recovery point/time objectives,
 backup retention/encryption, and managed failover procedures.
 
 ## Verify
 
-The implementation baseline verified on November 15, 2026 (`920dc8e`) passed
-190 tests, including 34 focused migration checks, plus dependency validation,
+The source snapshot audited on November 15, 2026 passed
+206 tests, including 41 focused migration checks, plus dependency validation,
 Ruff, Pyright, and deprecation checks. The existing laptop database also restarted
 successfully with unchanged note contents and row counts.
 
@@ -888,7 +907,7 @@ With more time, I would prioritize:
 - **Change:** Tune the implemented pool, timeout, throttle and index settings from
   sustained mixed-workload measurements on the selected cloud/database tier.
 - **Add:** Email verification, password reset, and a stronger account-recovery flow
-  before opening registration beyond the development/development environment.
+  before opening registration beyond the development environment.
 - **Add:** Note revision history and an audit trail for content, sharing, and
   membership changes, beyond the current optimistic version counter.
 - **Add:** Long-duration soak, failover, and disaster-recovery exercises with stated

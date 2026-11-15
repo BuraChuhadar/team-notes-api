@@ -153,7 +153,7 @@ check. Breaking changes need separate expand/contract releases and a reviewed
 rollback window, or a maintenance deployment with old replicas stopped. Never
 add arbitrary future revisions to keep a failing deployment green.
 
-The initial development migration `005_query_indexes` builds its indexes inside
+The existing migration `005_query_indexes` builds its indexes inside
 the migration transaction, without `CONCURRENTLY`. On a large existing table it
 can block writes or exceed the migration timeout. Plan maintenance for that
 upgrade or design a separate, reviewed concurrent-index migration strategy for
@@ -187,7 +187,7 @@ monitor actual PostgreSQL connections. Enforce a global cap with the database
 or an external connection pooler when required. Keep the complete budget below
 the database's configured limit. See the [Kubernetes deployment lifecycle](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/).
 
-Container requests/limits in these manifests are initial laptop/development
+Container requests/limits in these manifests are initial development
 defaults. Size them from the load-test measurements, including Argon2 CPU and
 memory use. Functional tests and a small local benchmark do not prove a production
 capacity or failover objective.

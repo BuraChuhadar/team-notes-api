@@ -32,6 +32,23 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  demo:
+    profiles:
+      - demo
+    build:
+      context: .
+      target: runtime
+    command: ["python", "scripts/demo.py", "--base-url", "http://api:8000"]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   test-db:
     image: postgres:18-alpine
     profiles:
