@@ -10,6 +10,7 @@ connection = config.attributes.get("connection")
 if not isinstance(connection, Connection):
     raise RuntimeError("Run migrations with app.database.migration_config(connection).")
 
+
 context.configure(
     connection=connection,
     target_metadata=Base.metadata,

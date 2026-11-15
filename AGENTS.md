@@ -11,22 +11,25 @@
 
 - Use Conventional Commits: `type(scope): short description`; the scope is optional.
 - Use `feat`, `fix`, `docs`, `test`, `refactor`, or `chore` as appropriate.
-- Use an imperative subject around 72 characters or fewer.
-- Keep each commit focused and runnable, with related tests and documentation.
-- Never commit database files, virtual environments, caches, or secrets.
+- Write the subject in the imperative, such as `feat(db): add note ownership`.
+- Keep subjects around 72 characters or fewer.
+- Keep each commit focused and runnable, including related tests and README updates.
+- Never commit local database files, virtual environments, caches, or secrets.
 
 ## Project
 
 - Python 3.11+, FastAPI, SQLAlchemy 2.1, Alembic, PostgreSQL, and Psycopg 3.
-- Entry point: `app.main:app`. The health endpoint is implemented.
-- Sessions: `app/database.py`; typed models: `app/models.py`;
-  migrations: `app/migrations/versions/`.
-- `DATABASE_URL` is required. Use PostgreSQL; do not add automatic `.env` loading.
-- The schema includes users, teams, memberships, and notes. Authentication,
-  authorization, and note APIs are future increments.
-- Docker Compose supplies local PostgreSQL. Its named volume is outside Git.
-- The Dockerfile separates runtime and test dependencies and uses an unprivileged
-  API user.
+- Application entry point: `app.main:app`.
+- Database sessions: `app/database.py`; typed ORM models: `app/models.py`;
+  Alembic revisions: `app/migrations/`.
+- `DATABASE_URL` is required. Do not add a SQLite fallback or automatic `.env` loading.
+- Docker Compose provides local PostgreSQL; its named volume is outside Git.
+- Dockerfile builds the API image; Docker Compose runs the API and database.
+- The schema includes users, teams, memberships, notes, and authentication sessions.
+- Registration, login, current-user lookup, and logout are implemented under
+  `/auth`. Team permissions and note endpoints are future increments.
+- Passwords use Argon2id; opaque bearer tokens are stored only as SHA-256 hashes.
+  Sessions expire after one hour and logout revokes the current token.
 
 ## Commands
 
@@ -38,40 +41,53 @@ curl -i http://127.0.0.1:8000/health
 docker compose --profile test run --build --rm tests
 ```
 
-For host development, activate the virtual environment, install
-`requirements-dev.txt`, and provide `DATABASE_URL`. Stop the container API first
-if it occupies port 8000. README.md contains complete setup commands.
+For host development, activate the virtual environment and stop the container API
+if it is using port 8000:
 
-The test container runs dependency validation, Ruff, Pyright, and integration
-tests. With the host virtual environment activated, run `python -m pip check`,
-`python -m ruff check app tests`, and `python -m pyright`. Keep the Python 3.11
-target and deprecated-API errors in `pyproject.toml`; fix warnings rather than
-suppressing them.
+```sh
+python -m pip install -r requirements-dev.txt
+docker compose up -d --wait db
+export DATABASE_URL='postgresql://notes:notes@127.0.0.1:5432/notes'
+python -m uvicorn app.main:app --reload
+```
+
+Docker Compose builds the test image and supplies an isolated test database and
+`TEST_DATABASE_URL`; reviewers need no host Python or manual database setup.
+Development dependencies belong in `requirements-dev.txt`, outside the runtime
+image. The test container runs dependency validation, Ruff, Pyright, and tests.
+For host checks, run `python -m pip check`, `python -m ruff check app tests`, and
+`python -m pyright`. Keep the shared Python 3.11 target and deprecated-API errors
+in `pyproject.toml`; fix warnings instead of suppressing them.
 
 ## Database changes
 
 - Keep initialization repeatable and preserve existing data.
-- Use typed SQLAlchemy ORM models and SQLAlchemy expressions with bound values.
-- Use short session scopes through `get_session()`. Commit successful work,
-  roll back failures, and return connections to the pool when sessions close.
-- Add explicit Alembic Python revisions for schema changes. Do not edit applied
-  revisions; preserve transactional upgrades and advisory locking.
-- Reject unknown revisions instead of changing a newer database.
-- Use `TEST_DATABASE_URL` and unique test schemas. Never change development or
-  public-schema data in tests. The Compose test database has no published port.
+- Use typed SQLAlchemy ORM models and SQLAlchemy expressions with bound values;
+  do not add handwritten SQL to application queries.
+- Use short-lived sessions from `get_session()`. Commit successful transactions,
+  roll back failures, and return pooled connections when the session closes.
+- Keep database files, virtual environments, caches, and secrets out of Git.
+- Use `TEST_DATABASE_URL` and unique test schemas; never change public-schema or
+  developer data in tests. The Compose test profile supplies a dedicated test
+  database with no published host port.
+- Add explicit Alembic Python revisions when changing the schema. Preserve the
+  transactional migration runner, advisory lock, and revision checks.
+- Do not modify applied migration files; add a new migration for later changes.
 
 ## Verification
 
-Run checks relevant to the change. Database changes should verify persistence,
-constraints, and rollback. Migration changes should cover repeat and concurrent
-initialization, incremental data preservation, and failed-upgrade atomicity.
-Startup changes should verify the lifespan and health endpoint. Report verified
-behavior and any remaining limits.
+Run checks relevant to the change. Database changes should verify persistence and
+failure rollback. Startup changes should verify the application starts and the
+health endpoint still responds. Report what was verified and any remaining limits.
+Authentication changes should cover registration, generic login failures, token
+expiry and revocation, public-user responses, and `Cache-Control: no-store`.
 
 ## Project requirements
 
-- Include all application source, migrations, tests, and reproducible commands.
-- Document two or three design decisions, their reasons, and tradeoffs.
+- Include all application source code and tests, plus reproducible setup and test
+  commands in README.md.
+- Document two or three design decisions that required the most thought, why they
+  were chosen, and their tradeoffs.
 - Explain what would be changed, added, or stopped with more time.
-- Keep those sections aligned with implemented behavior and distinguish planned
-  features from completed work.
+- Keep these sections aligned with implemented behavior as development proceeds;
+  clearly distinguish planned work from completed features.

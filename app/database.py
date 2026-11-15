@@ -11,12 +11,15 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from alembic.util import CommandError
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import (
+    create_engine,
+    func,
+    select,
+)
 from sqlalchemy.engine import Connection, Engine, URL, make_url
 from sqlalchemy.orm import Session
 
 MIGRATION_LOCK_ID = 0x4E4F544553
-
 
 @cache
 def _engine_for_url(database_url: URL) -> Engine:
@@ -49,14 +52,16 @@ def get_session() -> Generator[Session, None, None]:
 def migration_config(connection: Connection) -> Config:
     """Build an Alembic configuration sharing the caller's transaction."""
     config = Config()
-    config.set_main_option("script_location", str(Path(__file__).parent / "migrations"))
+    script_location = str(Path(__file__).parent / "migrations")
+    config.set_main_option("script_location", script_location)
     config.attributes["connection"] = connection
     return config
 
 
 def init_database() -> None:
-    """Apply pending revisions atomically and preserve existing data."""
+    """Apply pending Alembic revisions atomically, preserving existing data."""
     with get_engine().begin() as connection:
+        # Serialize startup before inspecting or creating the revision ledger.
         connection.execute(select(func.pg_advisory_xact_lock(MIGRATION_LOCK_ID)))
         config = migration_config(connection)
         scripts = ScriptDirectory.from_config(config)

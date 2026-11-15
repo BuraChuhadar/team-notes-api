@@ -22,27 +22,18 @@ class ConfigurationTests(unittest.TestCase):
                     self.fail("A session should require DATABASE_URL")
 
 
-@unittest.skipUnless(
-    os.environ.get("TEST_DATABASE_URL"), "Set TEST_DATABASE_URL to run PostgreSQL tests"
-)
+@unittest.skipUnless(os.environ.get("TEST_DATABASE_URL"), "Set TEST_DATABASE_URL to run PostgreSQL tests")
 class PostgreSQLTestCase(unittest.TestCase):
     def setUp(self) -> None:
-        self.test_url = make_url(os.environ["TEST_DATABASE_URL"]).set(
-            drivername="postgresql+psycopg"
-        )
+        self.test_url = make_url(os.environ["TEST_DATABASE_URL"]).set(drivername="postgresql+psycopg")
         self.admin_engine = create_engine(self.test_url)
         self.addCleanup(self.admin_engine.dispose)
         self.schema = "test_notes_" + uuid4().hex
         with self.admin_engine.begin() as connection:
             connection.execute(CreateSchema(self.schema))
         self.addCleanup(self.drop_schema)
-        schema_url = self.test_url.update_query_dict(
-            {"options": f"-csearch_path={self.schema}"}
-        )
-        environment = patch.dict(
-            os.environ,
-            {"DATABASE_URL": schema_url.render_as_string(hide_password=False)},
-        )
+        schema_url = self.test_url.update_query_dict({"options": f"-csearch_path={self.schema}"})
+        environment = patch.dict(os.environ, {"DATABASE_URL": schema_url.render_as_string(hide_password=False)})
         environment.start()
         self.addCleanup(environment.stop)
         self.addCleanup(lambda: get_engine().dispose())
@@ -53,11 +44,7 @@ class PostgreSQLTestCase(unittest.TestCase):
 
     def seed_user_and_team(self) -> tuple[int, int]:
         with get_session() as session:
-            user = User(
-                email="alice@example.test",
-                display_name="Alice",
-                password_hash="test-password-hash",
-            )
+            user = User(email="alice@example.test", display_name="Alice", password_hash="test-password-hash")
             team = Team(name="Team")
             session.add_all([user, team])
             session.flush()
@@ -103,13 +90,7 @@ class DatabaseTests(PostgreSQLTestCase):
         self.seed_user_and_team()
         with self.assertRaises(IntegrityError) as failure:
             with get_session() as session:
-                session.add(
-                    User(
-                        email="ALICE@example.test",
-                        display_name="Another Alice",
-                        password_hash="another-test-hash",
-                    )
-                )
+                session.add(User(email="ALICE@example.test", display_name="Another Alice", password_hash="another-test-hash"))
         self.assertIsInstance(failure.exception.orig, psycopg.errors.UniqueViolation)
 
     def test_memberships_enforce_roles_uniqueness_and_references(self) -> None:
@@ -141,29 +122,19 @@ class DatabaseTests(PostgreSQLTestCase):
             with self.subTest(owner=owner, team=team):
                 with self.assertRaises(IntegrityError) as failure:
                     with get_session() as session:
-                        session.add(
-                            Note(owner_id=owner, team_id=team, title="Invalid note")
-                        )
+                        session.add(Note(owner_id=owner, team_id=team, title="Invalid note"))
                 self.assertIsInstance(failure.exception.orig, error)
         with get_session() as session:
             session.add(Note(owner_id=user_id, team_id=team_id, title="Team note"))
-        for statement in (
-            delete(User).where(User.id == user_id),
-            delete(Team).where(Team.id == team_id),
-        ):
+        for statement in (delete(User).where(User.id == user_id), delete(Team).where(Team.id == team_id)):
             with self.subTest(statement=str(statement)):
                 with self.assertRaises(IntegrityError) as failure:
                     with get_session() as session:
                         session.execute(statement)
-                self.assertIsInstance(
-                    failure.exception.orig, psycopg.errors.RestrictViolation
-                )
+                self.assertIsInstance(failure.exception.orig, psycopg.errors.RestrictViolation)
         with get_session() as session:
             note = session.scalars(select(Note)).one()
-            self.assertEqual(
-                (note.owner_id, note.team_id, note.title),
-                (user_id, team_id, "Team note"),
-            )
+            self.assertEqual((note.owner_id, note.team_id, note.title), (user_id, team_id, "Team note"))
             self.assertIsNotNone(session.get(User, user_id))
             self.assertIsNotNone(session.get(Team, team_id))
 

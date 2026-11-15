@@ -1,4 +1,4 @@
-"""Typed SQLAlchemy mappings for accounts, teams, memberships, and notes."""
+"""Typed SQLAlchemy mappings for accounts, teams, notes, and sessions."""
 
 from datetime import datetime
 
@@ -111,3 +111,26 @@ class Note(Base):
         DateTime(timezone=True), server_default=func.current_timestamp()
     )
 
+
+class AuthSession(Base):
+    __tablename__ = "sessions"
+    __table_args__ = (
+        CheckConstraint(
+            column("token_hash").regexp_match("^[0-9a-f]{64}$"),
+            name="sessions_token_hash_check",
+        ),
+        CheckConstraint(
+            column("expires_at") > column("created_at"), name="sessions_check"
+        ),
+        Index("sessions_user_id_idx", "user_id"),
+        Index("sessions_expires_at_idx", "expires_at"),
+    )
+
+    token_hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.current_timestamp()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
