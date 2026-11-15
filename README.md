@@ -1,9 +1,9 @@
 # Notes API
 
-A FastAPI REST service for a note-taking product shared across teams.
+A FastAPI REST service for a note taking product shared across teams.
 
 The service supports accounts, teams, private and team notes, versioned editing
-and deletion, revocable read-only sharing, and permission-aware search. It runs
+and deletion, revocable read only sharing, and permission aware search. It runs
 with Docker and PostgreSQL, uses typed SQLAlchemy models and Alembic migrations,
 and publishes a generated OpenAPI reference.
 
@@ -38,11 +38,11 @@ flowchart TD
     Client["Client or Swagger UI"] -->|"HTTP / JSON"| API["FastAPI / Uvicorn<br/>One worker per replica"]
     Client -.-> Gateway["Scale profile: NGINX<br/>Cloud: ingress with TLS"]
     Gateway --> API
-    API -->|"Protected operations"| Auth["Bearer authentication<br/>Database-backed session lookup"]
+    API -->|"Protected operations"| Auth["Bearer authentication<br/>Database backed session lookup"]
     API -->|"Register or sign in"| Routes["Route modules<br/>Auth, teams, notes, sharing"]
     Auth -->|"Authenticated user"| Routes
     API -->|"Public health check"| Health["/health: process liveness<br/>/ready: database and schema"]
-    API -.-> Metrics["Per-replica Prometheus metrics<br/>Private cloud scrape with bearer token"]
+    API -.-> Metrics["Per replica Prometheus metrics<br/>Private cloud scrape with bearer token"]
     Health -->|"Only /ready"| Pool
     API -->|"Public reference"| Docs["Generated OpenAPI<br/>/openapi.json, /docs, /redoc"]
     Routes -.->|"Routes and Pydantic models"| Docs
@@ -113,8 +113,8 @@ docker compose exec -T api python scripts/demo.py
 The script uses only Python's standard library and needs no host Python, HTTP
 client, API token, or manually entered IDs. It registers unique Alice, Bob, and
 Carol accounts on each run, creates teams and notes, checks a conflicting save,
-read-only sharing, permission-aware search and pagination, revocation, deletion,
-and logout. Unexpected statuses or missing no-store headers make it fail with a
+read only sharing, permission aware search and pagination, revocation, deletion,
+and logout. Unexpected statuses or missing `no-store` headers make it fail with a
 nonzero exit code. Passwords and tokens are never printed.
 
 The demo logs out its generated sessions after the checks. To make requests
@@ -142,7 +142,7 @@ Expected: HTTP `200 OK` with `{"status":"ok"}`.
 | GET | `/health` | Confirm the service is running |
 | GET | `/ready` | Check database connectivity and schema readiness |
 | POST | `/auth/register` | Create an account |
-| POST | `/auth/login` | Create a one-hour bearer session |
+| POST | `/auth/login` | Create a one hour bearer session |
 | GET | `/auth/me` | Get the authenticated user |
 | POST | `/auth/logout` | Revoke the current session |
 | POST | `/teams` | Create a team and become its owner |
@@ -156,7 +156,7 @@ Expected: HTTP `200 OK` with `{"status":"ok"}`.
 | PUT | `/notes/{note_id}` | Save a note using its current version |
 | DELETE | `/notes/{note_id}?version={version}` | Delete a note using its current version |
 | GET | `/notes/{note_id}/shares` | List grants as the note's sharing manager |
-| POST | `/notes/{note_id}/shares` | Grant read-only access to a recipient team |
+| POST | `/notes/{note_id}/shares` | Grant read only access to a recipient team |
 | GET | `/notes/{note_id}/shares/{team_id}` | Read a managed grant |
 | DELETE | `/notes/{note_id}/shares/{team_id}` | Revoke a managed grant |
 
@@ -166,7 +166,7 @@ returning `503` when the instance is unavailable.
 
 ### Local API documentation
 
-Start the application with the quick-start command before opening these links
+Start the application with the quick start command before opening these links
 on the same computer:
 
 - [Local interactive API documentation (Swagger UI)](http://127.0.0.1:8000/docs)
@@ -211,8 +211,8 @@ Unknown input fields and invalid values return `422`; an existing email returns
 the same error for an unknown account or a wrong password.
 
 Passwords are hashed with Argon2id through Pwdlib. Session tokens are random,
-expire after one hour, and are stored only as SHA-256 hashes. These are revocable
-database sessions, with no JWT or signing-secret configuration. Authentication
+expire after one hour, and are stored only as `SHA-256` hashes. These are revocable
+database sessions, with no JWT or signing secret configuration. Authentication
 responses use `Cache-Control: no-store`.
 
 ### Teams and membership
@@ -264,8 +264,8 @@ and teams the caller does not belong to both return `404`; this prevents team
 existence or member information from being disclosed to outsiders. Adding an
 unknown user or removing a missing member returns `404`. Adding an existing
 member returns `409`. Owners cannot be removed or demoted (`409`), preserving
-team ownership; ownership transfer and member self-service are not implemented.
-The API always adds the `member` role and rejects client-supplied roles. Unknown
+team ownership; ownership transfer and member self service are not implemented.
+The API always adds the `member` role and rejects client supplied roles. Unknown
 fields, invalid names, and invalid IDs return `422`. IDs must be positive
 PostgreSQL BIGINT values; JSON `user_id` must be an integer, not a boolean or a
 string. Team responses, including errors, use `Cache-Control: no-store`.
@@ -301,13 +301,13 @@ Omitting `team_id`, or setting it to `null`, creates a private note. A supplied
 team ID must be a positive integer, without string or boolean coercion. Invalid
 input and unknown fields return `422`.
 
-Personal notes are initially owner-only; explicit shares can add read-only team access.
+Personal notes are initially owner only; explicit shares can add read only team access.
 Supplying a team ID requires
 current membership in that team; both `owner` and `member` roles can create and
 read team notes. Unknown teams and teams the caller does not belong to return
-`404`. Removing source-team membership revokes access through that team,
-including for the original creator. An independent recipient-team grant can
-retain read-only access. Private notes are not automatically shared with teams.
+`404`. Removing source team membership revokes access through that team,
+including for the original creator. An independent recipient team grant can
+retain read only access. Private notes are not automatically shared with teams.
 
 Listing returns a plain JSON array containing the caller's private notes and
 notes for teams they currently belong to. `limit` defaults to 50 and accepts
@@ -315,7 +315,7 @@ notes for teams they currently belong to. `limit` defaults to 50 and accepts
 inaccessible note returns the same `404` response. Note responses use
 `Cache-Control: no-store`.
 
-Read routes also include notes shared read-only with a recipient team the caller currently belongs to.
+Read routes also include notes shared read only with a recipient team the caller currently belongs to.
 
 ### Search and paginate notes
 
@@ -329,12 +329,12 @@ curl -i --get http://127.0.0.1:8000/notes \
   --data-urlencode 'offset=0'
 ```
 
-Search matches a case-insensitive literal substring. Leading and trailing query
+Search matches a case insensitive literal substring. Leading and trailing query
 whitespace is removed; the remaining query must contain 1–200 characters. Empty,
-whitespace-only, or oversized queries return `422`. SQL wildcard characters such
+whitespace only, or oversized queries return `422`. SQL wildcard characters such
 as `%` and `_` are literal text. Omitting `q` lists all visible notes.
 
-Current ownership, source-team membership, and recipient-team grants are checked
+Current ownership, source team membership, and recipient team grants are checked
 before search and pagination. Revoking a grant or removing membership removes
 search access too. Multiple matching grants return each note once. Results use
 the existing JSON array format, ordered by creation time descending and then ID
@@ -342,11 +342,11 @@ descending. `limit` defaults to 50 and accepts 1–100; `offset` defaults to zer
 and accepts nonnegative PostgreSQL BIGINT values. No matches or an exhausted page
 returns `200` with `[]`. Search does not change notes or their versions.
 
-### Share notes read-only with another team
+### Share notes read only with another team
 
-A personal-note owner or a current owner of a note's source team can manage its
-shares. Ordinary source-team members, including the original author, cannot
-manage team-note shares. To grant access, the caller must also currently belong
+A personal note owner or a current owner of a note's source team can manage its
+shares. Ordinary source team members, including the original author, cannot
+manage team note shares. To grant access, the caller must also currently belong
 to the recipient team. Create a recipient team or use one from `GET /teams`, then
 substitute its returned ID below:
 
@@ -366,14 +366,14 @@ curl -i -X DELETE "http://127.0.0.1:8000/notes/$NOTE_ID/shares/$RECIPIENT_TEAM_I
 
 Creation returns `201` with `note_id`, `team_id`, and `created_at`. Its `Location`
 identifies an individual grant that its manager can retrieve with `GET`.
-Recipient-team members can read the note and see it in their note listing; the
-grant never permits editing, deletion, or re-sharing. Losing recipient membership
+Recipient team members can read the note and see it in their note listing; the
+grant never permits editing, deletion, or resharing. Losing recipient membership
 or revoking the grant removes that read access on subsequent requests. Independent
 source membership or another grant can still provide access. Managers may revoke
 a grant after leaving its recipient team. Sharing changes neither the content
 version nor its update timestamp.
 
-Share listing is manager-only, with the same `limit` and `offset` bounds as note
+Share listing is manager only, with the same `limit` and `offset` bounds as note
 listing. It orders by creation time descending, then recipient team ID descending.
 Missing or unmanaged notes return `404`; duplicate grants and attempts to share
 back to the source team return `409`. Revocation returns an empty `204`. All share
@@ -444,7 +444,7 @@ to use another PostgreSQL server. Existing `postgresql://` URLs remain supported
 and select the Psycopg 3 driver.
 
 An engine manages pooled connections. Each `get_session()` context opens a
-short-lived session, commits successful work, and rolls back failures before
+short lived session, commits successful work, and rolls back failures before
 closing. Response models contain the selected public fields, including when ORM
 objects hold password hashes or session data.
 
@@ -489,11 +489,11 @@ The schema contains:
 
 | Table | Purpose |
 | --- | --- |
-| `users` | User records with case-insensitive unique email addresses |
+| `users` | User records with case insensitive unique email addresses |
 | `teams` | Team records |
 | `memberships` | User membership in teams, with `owner` or `member` roles |
 | `notes` | Notes with an owner, optional source team, and optimistic version |
-| `note_shares` | Revocable read-only grants to current recipient-team members |
+| `note_shares` | Revocable read only grants to current recipient team members |
 | `sessions` | Hashed bearer tokens, user ownership, and expiration |
 | `login_throttles` | Shared hashed account/address login budgets |
 | `alembic_version` | Current Alembic revision |
@@ -514,10 +514,10 @@ and `NOTES_DB_PATH` is no longer used.
 These safeguards are implemented and can be exercised
 on the laptop. Cloud deployment uses the same image and API behavior; the manifests
 require an external PostgreSQL service and real deployment secrets. Capacity and
-high-availability objectives still require measurements in the chosen environment.
+high availability objectives still require measurements in the chosen environment.
 
 The demonstration gateway and example NGINX ingress allow request bodies up to
-2 MiB, including maximum-length Unicode notes serialized with JSON escapes.
+2 MiB, including maximum length Unicode notes serialized with JSON escapes.
 
 ### Database limits and release operations
 
@@ -543,16 +543,16 @@ Transactions roll back on query/lock failures. Temporary pool/database resource
 failures return safe JSON `503` responses with `Retry-After`; the application does
 not automatically replay writes with uncertain outcomes. Pool liveness checks
 recover stale connections on checkout. `/ready` returns `503` for a database or
-migration mismatch, while `/health` remains a process-liveness probe.
+migration mismatch, while `/health` remains a process liveness probe.
 
-The scale overlay has two single-worker API containers, each with a maximum of
-10 connections. Kubernetes adds one rolling-update surge pod; terminating pods
+The scale overlay has two single worker API containers, each with a maximum of
+10 connections. Kubernetes adds one rolling update surge pod; terminating pods
 may retain their pools while draining. With an allowance for two draining pods,
 plan `(2 + 1 + 2) × 1 × (5 + 5) = 50` API connections, plus migration,
 maintenance, monitoring, and administrative reserves. This is a planning budget,
 not a hard global cap. Recalculate it when changing replicas or rollout/drain
 behavior, and keep the total below PostgreSQL's connection limit. The deployment
-guide includes explicit migration-owner/runtime-role grants and a nonowner CRUD
+guide includes explicit migration owner/runtime role grants and a nonowner CRUD
 verification flow.
 Readiness accepts only the image's own migration head by default. Reviewed additive
 rollouts can explicitly allow a declared future revision; follow the staged
@@ -564,14 +564,14 @@ docker compose -f compose.yaml -f compose.scale.yaml up --build -d --wait
 
 Use an independent Compose project and unused port settings when keeping the
 normal stack running. See [deployment instructions](deploy/README.md) for portable
-Kubernetes manifests, migration-before-rollout commands, secrets, resource limits,
-readiness/liveness probes, TLS ingress, and per-pod metrics scraping. Local
+Kubernetes manifests, migration before rollout commands, secrets, resource limits,
+readiness/liveness probes, TLS ingress, and per pod metrics scraping. Local
 PostgreSQL is one instance; cloud database high availability and managed backups
 are configured through the selected database provider.
 
 ### Indexed queries and cursor pagination
 
-Alembic revision `005_query_indexes` adds ordered global/owner/source-team indexes
+Alembic revision `005_query_indexes` adds ordered global/owner/source team indexes
 and GIN trigram indexes for title/content substring search. PostgreSQL's trusted
 `pg_trgm` extension is installed in `notes_extensions` if missing. If a managed
 database already installs it elsewhere, set `DB_TRIGRAM_SCHEMA` to that schema
@@ -612,22 +612,22 @@ with `Retry-After`. Stored bucket keys are hashed. Trusted proxy configuration i
 required to preserve real client addresses; spoofed forwarded headers are not
 accepted on a directly exposed API.
 
-Registration and login share a per-process password-hashing admission limit:
+Registration and login share a per process password hashing admission limit:
 `PASSWORD_HASH_CONCURRENCY=2` by default (allowed range 1–8). The existing Argon2id
 parameters remain unchanged. When both slots are occupied, requests receive a
-safe `503` with `Retry-After: 1` instead of queuing more memory-intensive hashes.
+safe `503` with `Retry-After: 1` instead of queuing more memory intensive hashes.
 The recommended hash uses about 64 MiB per operation, plus process overhead;
 budget `workers × PASSWORD_HASH_CONCURRENCY × 64 MiB` within each container's
 memory limit. The cloud example uses one worker, two slots, and a 512 MiB limit.
 Increase these settings only after measuring CPU and peak memory together.
 
-`/metrics` exposes per-process Prometheus request counts, duration histograms,
-connection-pool gauges, and process metrics. Labels use route templates, never
+`/metrics` exposes per process Prometheus request counts, duration histograms,
+connection pool gauges, and process metrics. Labels use route templates, never
 raw note IDs, user identities, query text, or tokens. Set `METRICS_TOKEN` for bearer
 authentication; cloud manifests require it and the local gateway keeps the metrics
 path private. Scrape each replica separately. The laptop default permits a direct
 local scrape when the token is unset. Keep one worker per replica for these
-per-process metrics; using multiple workers in one container requires a
+per process metrics; using multiple workers in one container requires a
 Prometheus multiprocess collection setup before the scrape represents every worker.
 
 Expired sessions and inactive throttle windows are removed in bounded transactions
@@ -637,7 +637,7 @@ using `SKIP LOCKED`, so concurrent cleanup jobs do not wait on the same batch:
 docker compose run --rm api python -m scripts.cleanup_sessions --batch-size 1000
 ```
 
-A Kubernetes CronJob schedules this command. Expired-token checks remain enforced
+A Kubernetes CronJob schedules this command. Expired token checks remain enforced
 on every request even before cleanup runs.
 
 ### Load testing and backup recovery
@@ -663,20 +663,20 @@ Use `--keep-stack` only when inspecting the disposable dataset afterward; the
 command prints its unique project name for explicit cleanup. Local observations
 describe the local environment; cloud capacity requires separate measurement.
 
-A measured laptop run used 10,000 notes, eight users, two API replicas, a 15-second
+A measured laptop run used 10,000 notes, eight users, two API replicas, a 15 second
 window and a target of 50 requests/second: 750/750 requests returned `200`, with
 50.04 completed requests/second, p50 4.99 ms, p95 62.43 ms and p99 167.50 ms.
 No arrivals were dropped; sampled database connections peaked at eight and no lock
 waits were observed. These are one local run, with client scheduling and Docker
 sampling overhead recorded, rather than an upper capacity bound.
 
-On a matching 10,000-note dataset, actual PostgreSQL plans selected the ordered note index.
-At offset 4,000, deep-offset execution measured 1.028 ms versus 0.049 ms for a
+On a matching 10,000 note dataset, actual PostgreSQL plans selected the ordered note index.
+At offset 4,000, deep offset execution measured 1.028 ms versus 0.049 ms for a
 keyset query at the same boundary. Selective substring search selected both GIN
 trigram indexes and measured 0.283 ms. Query timing excludes client/network time
 and varies with cache state and data distribution; it is separate from HTTP latency.
 
-`scripts.backup_restore` uses PostgreSQL custom-format `.dump` archives, with
+`scripts.backup_restore` uses PostgreSQL custom format `.dump` archives, with
 credentials read from environment variables. It refuses to overwrite an existing
 backup or restore into a nonempty/same database. Restore is one transaction and
 stops on errors. Use PostgreSQL 18 client tools on a cloud operations host, or the
@@ -717,7 +717,7 @@ successfully with unchanged note contents and row counts.
 
 Run dependency validation, linting, type checking, and the full test suite using
 Docker. No host Python installation, virtual environment, database creation, or
-environment-variable setup is required:
+environment variable setup is required:
 
 ```sh
 docker compose --profile test run --build --rm tests
@@ -761,7 +761,7 @@ In VS Code, install the recommended Python, Pylance, and Ruff extensions and use
 **Python: Select Interpreter** to select this project's `.venv`. Pylance reads
 the shared `pyproject.toml` configuration, checks the workspace, and treats
 deprecated API use as an error. Keep editor extensions updated through VS Code;
-the pinned command-line checkers provide reproducible CI results.
+the pinned command line checkers provide reproducible CI results.
 
 Run the same static checks locally from the project directory:
 
@@ -798,9 +798,9 @@ parameter constraints, and applicable response headers.
 - All collection reads accept `limit` (default 50, range 1–100) and `offset`
   (default 0, range 0–9223372036854775807). Access filtering happens before
   pagination. Notes and shares sort by creation time descending and a descending
-  ID tie-breaker; teams and rosters sort by team/user ID ascending. Empty or
+  ID tie breaker; teams and rosters sort by team/user ID ascending. Empty or
   exhausted pages return `[]`. An inaccessible parent resource still returns `404`.
-- Note lists optionally accept `q`: a trimmed 1–200 character, case-insensitive
+- Note lists optionally accept `q`: a trimmed 1–200 character, case insensitive
   literal substring search across title and content. Search and permission
   filtering happen before pagination; `%` and `_` are literal characters.
 - Protected operations require an opaque bearer token. Missing, invalid, expired,
@@ -811,21 +811,21 @@ parameter constraints, and applicable response headers.
 - Application errors use `{"detail":"message"}`. Request validation returns
   `422` with `{"detail":[{"type":"missing","loc":["body","title"],"msg":"Field required"}]}`.
   Validation issues omit submitted values and validator context; password fields
-  are documented as write-only. Unexpected failures return a generic JSON `500`
+  are documented as write only. Unexpected failures return a generic JSON `500`
   without database details, credentials, or tracebacks.
 - Note updates require both editable fields and the latest `version` in the
   request body; deletion requires the version query parameter. A stale authorized
   write returns `409` without changing data. Read the current note before retrying.
-  Read-only sharing never grants update, deletion, or share-management permission.
+  Read only sharing never grants update, deletion, or share management permission.
 - Unsupported methods return `405` with an `Allow` header listing every supported
   method for that resource.
 - Resource IDs are positive PostgreSQL BIGINT values. Timestamps are RFC 3339
-  date-time strings with a UTC offset. Unknown JSON body fields are rejected;
+  date and time strings with a UTC offset. Unknown JSON body fields are rejected;
   request limits and examples are included in the generated schema.
 
 `tests/test_api_contract.py` validates the generated OpenAPI document, checks
 operation/security/status/header conventions, and validates actual HTTP response
-bodies against their published JSON schemas. A PostgreSQL-backed flow checks
+bodies against their published JSON schemas. A PostgreSQL backed flow checks
 registration, login, creation, canonical retrieval, and logout. These checks run
 with the regular Docker verification command and treat deprecations as errors.
 OpenAPI and JSON Schema validators are development dependencies only.
@@ -840,16 +840,16 @@ app/
   config.py         # Validated pool, timeout, and deployment settings
   database.py       # Pooled ORM sessions and Alembic migration runner
   main.py           # Application, liveness, readiness, and metrics endpoints
-  migration_compat.py # Frozen historical-schema checks for one-time adoption
+  migration_compat.py # Frozen historical schema checks for one time adoption
   migrations/       # Versioned Alembic Python revisions
   models.py         # Typed SQLAlchemy database models
   notes.py          # Note CRUD, version checks, visibility, and search
-  observability.py  # Bounded per-process Prometheus metrics
-  rate_limit.py     # Shared PostgreSQL login-attempt budgets
-  sharing.py        # Revocable read-only recipient-team grants
+  observability.py  # Bounded per process Prometheus metrics
+  rate_limit.py     # Shared PostgreSQL login attempt budgets
+  sharing.py        # Revocable read only recipient team grants
   security.py       # Password hashing and token helpers
-  teams.py          # Team and owner-managed membership routes
-  validation.py     # Shared PostgreSQL-text and password-encoding validation
+  teams.py          # Team and owner managed membership routes
+  validation.py     # Shared PostgreSQL text and password encoding validation
 tests/
   test_api_contract.py # OpenAPI validation and HTTP/schema consistency
   test_auth.py      # Authentication HTTP integration tests
@@ -860,23 +860,23 @@ tests/
   test_notes.py     # Note creation/read access tests
   test_note_mutations.py # Versions, writes, deletion, and transaction races
   test_search.py    # Literal search, access filtering, and pagination
-  test_sharing.py   # Read-only grants and revocation
+  test_sharing.py   # Read only grants and revocation
   test_acceptance.py # Full API collaboration and persistence scenarios
   test_database_config.py # Pools, timeouts, cloud role, rollout, and cleanup
   test_cursor_pagination.py # Stable pagination and permission changes
   test_operations.py # Readiness, metrics privacy, and resource failures
   test_rate_limit.py # Shared account/address throttling
-  test_hash_capacity.py # Shared password-hashing memory admission
+  test_hash_capacity.py # Shared password hashing memory admission
   test_backup_tools.py # Safe backup/restore boundaries and credentials
-  test_load_tools.py # Load-tool input and scheduling behavior
+  test_load_tools.py # Load tool input and scheduling behavior
   test_text_validation.py # Invalid text rejection and password round trips
 scripts/
   demo.py           # Complete HTTP demonstration using the standard library
   migrate.py        # Separate cloud migration command
-  cleanup_sessions.py # Bounded session and throttle-window maintenance
-  load_test.py      # Disposable two-replica HTTP benchmark
+  cleanup_sessions.py # Bounded session and throttle window maintenance
+  load_test.py      # Disposable two replica HTTP benchmark
   benchmark_data.py # Synthetic fixtures and connection/lock samples
-  query_plans.py    # Actual PostgreSQL query-plan diagnostics
+  query_plans.py    # Actual PostgreSQL query plan diagnostics
   backup_restore.py # Private archives, guarded restore, and comparison
 deploy/             # Kubernetes manifests, NGINX, and deployment guide
 AGENTS.md           # Development instructions
@@ -901,11 +901,11 @@ runnable, including relevant tests and documentation. Common types are `feat`,
 
 ## Continuous integration
 
-GitHub Actions runs the Docker-only validation command, including dependency
+GitHub Actions runs the Docker only validation command, including dependency
 compatibility, Ruff lint rules, Pyright types and deprecations, and PostgreSQL
 integration tests. It then builds and starts the application stack, checks the
 HTTP endpoints, verifies that the API container runs as a nonroot user, and runs
-the complete HTTP collaboration demo. The workflow uses a pinned checkout action and read-only repository permissions. No
+the complete HTTP collaboration demo. The workflow uses a pinned checkout action and read only repository permissions. No
 database credentials or service setup are required in repository settings.
 
 ## Design choices and tradeoffs
@@ -920,12 +920,12 @@ These decisions describe implemented behavior; planned extensions are below.
    history. The tradeoffs are an ORM and migration dependency, pool lifecycle
    management, and maintaining explicit revisions alongside model changes.
 2. **Argon2id passwords and revocable opaque sessions.** Argon2id provides password
-   hashing, while random bearer tokens are stored only as SHA-256 hashes. Sessions
+   hashing, while random bearer tokens are stored only as `SHA-256` hashes. Sessions
    expire after one hour and logout revokes them immediately. This avoids JWT
-   signing-key management and delayed revocation, at the cost of a database lookup
-   for each authenticated request and password-hashing work during login.
-3. **Membership-filtered queries and versioned writes.** Private-note access
-   checks ownership; team-note access checks current membership, including for the
+   signing key management and delayed revocation, at the cost of a database lookup
+   for each authenticated request and password hashing work during login.
+3. **Membership filtered queries and versioned writes.** Private note access
+   checks ownership; team note access checks current membership, including for the
    original creator. This makes membership removal take effect on subsequent reads without
    copying access lists onto each note. Filtering also happens before pagination,
    and missing and inaccessible notes share a `404` response. The tradeoff is more
@@ -934,10 +934,10 @@ These decisions describe implemented behavior; planned extensions are below.
    require the caller's current version, and check current membership in the same
    transaction. Conflicting saves return `409` instead of overwriting another
    writer's changes. Clients must reload and reconcile conflicts; this provides
-   safe shared saves without simultaneous character-level editing. Read-only grants
+   safe shared saves without simultaneous character level editing. Read only grants
    extend the read predicate without changing write permissions. Literal substring
    search shares that read predicate. Bounded offset pages preserve the original
-   API, while caller/query-bound cursor pages support deep continuation. Ordered
+   API, while caller/query bound cursor pages support deep continuation. Ordered
    and trigram indexes have measured query plans, with added storage and write
    maintenance as their tradeoff.
 
@@ -946,13 +946,13 @@ These decisions describe implemented behavior; planned extensions are below.
 With more time, I would prioritize:
 
 - **Change:** Tune the implemented pool, timeout, throttle and index settings from
-  sustained mixed-workload measurements on the selected cloud/database tier.
-- **Add:** Email verification, password reset, and a stronger account-recovery flow
+  sustained mixed workload measurements on the selected cloud/database tier.
+- **Add:** Email verification, password reset, and a stronger account recovery flow
   before opening registration beyond the development environment.
 - **Add:** Note revision history and an audit trail for content, sharing, and
   membership changes, beyond the current optimistic version counter.
-- **Add:** Long-duration soak, failover, and disaster-recovery exercises with stated
+- **Add:** Long duration soak, failover, and disaster recovery exercises with stated
   recovery point/time objectives, managed backup retention/encryption and alerts.
 - **Keep:** Separate cloud migration jobs, explicit reviewed schema compatibility,
-  readiness-based routing, and per-replica metrics. The laptop remains one-command
-  runnable; the optional two-replica profile demonstrates the deployment pattern.
+  readiness based routing, and per replica metrics. The laptop remains one command
+  runnable; the optional two replica profile demonstrates the deployment pattern.

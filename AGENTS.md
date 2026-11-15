@@ -18,7 +18,7 @@
 
 ## Project
 
-- The project has a one-command local setup and portable cloud
+- The project has a one command local setup and portable cloud
   deployment. Keep capacity settings adjustable and distinguish measured laptop
   results from production guarantees. Deployment details live in `deploy/README.md`.
 - Python 3.11+, FastAPI, SQLAlchemy 2.1, Alembic, PostgreSQL, and Psycopg 3.
@@ -29,30 +29,30 @@
 - Docker Compose provides local PostgreSQL; its named volume is outside Git.
 - Dockerfile builds the API image; Docker Compose runs the API and database.
 - The schema includes users, teams, memberships, notes, note shares, and sessions.
-- Registration, login, current-user lookup, and logout are implemented under
+- Registration, login, current user lookup, and logout are implemented under
   `/auth`. Note creation, listing, reading, updates, and deletion are implemented
   under `/notes`.
-- Personal notes are owner-only unless shared read-only. Source-team rights
+- Personal notes are owner only unless shared read only. Source team rights
   require current membership, including for the original creator; removing that
   membership revokes those rights. An independent recipient grant may retain read access.
 - Team creation, listing, and membership routes are implemented under `/teams`.
   Only owners can add or remove members; all members can view their roster.
   Outsiders receive `404`. Create teams and owner memberships atomically; reject
-  owner removal and client-supplied roles.
+  owner removal and client supplied roles.
 - Note saves and deletes require the current positive `version`; stale writes
   return `409`. Keep authorization checks and membership locks inside the write
   transaction. Owners alone can mutate private notes; current team members can
   mutate team notes. Preserve ownership and team assignment during saves.
 - Note lists support optional trimmed literal search with `q` (1–200 characters).
   Apply current read permissions and search before stable, bounded pagination.
-- Read-only grants extend read access only; keep `writable_to` independent.
-- Passwords use Argon2id; opaque bearer tokens are stored only as SHA-256 hashes.
+- Read only grants extend read access only; keep `writable_to` independent.
+- Passwords use Argon2id; opaque bearer tokens are stored only as `SHA-256` hashes.
   Sessions expire after one hour and logout revokes the current token.
 
 ## Commands
 
-The quick-start command is `docker compose run --build --rm demo`. Preserve its
-fresh-clone behavior: dependencies become healthy, migrations run, and the demo
+The quick start command is `docker compose run --build --rm demo`. Preserve its
+fresh clone behavior: dependencies become healthy, migrations run, and the demo
 creates its own credentials and exercises the API. No prior login or `.env` setup
 is required.
 
@@ -79,7 +79,7 @@ Docker Compose builds the test image and supplies an isolated test database and
 Development dependencies belong in `requirements-dev.txt`, outside the runtime
 image. The test container runs dependency validation, Ruff, Pyright, and tests.
 For host checks, run `python -m pip check`, `python -m ruff check app tests scripts`, and
-`python -m pyright`. Keep the shared Python 3.11 target and deprecated-API errors
+`python -m pyright`. Keep the shared Python 3.11 target and deprecated API errors
 in `pyproject.toml`; fix warnings instead of suppressing them.
 
 Use `collections.abc.Generator` for synchronous context managers and
@@ -92,10 +92,10 @@ parameters supported by Python 3.11. Preserve the lifespan annotation
 - Keep initialization repeatable and preserve existing data.
 - Use typed SQLAlchemy ORM models and SQLAlchemy expressions with bound values;
   do not add handwritten SQL to application queries.
-- Use short-lived sessions from `get_session()`. Commit successful transactions,
+- Use short lived sessions from `get_session()`. Commit successful transactions,
   roll back failures, and return pooled connections when the session closes.
 - Keep database files, virtual environments, caches, and secrets out of Git.
-- Use `TEST_DATABASE_URL` and unique test schemas; never change public-schema or
+- Use `TEST_DATABASE_URL` and unique test schemas; never change public schema or
   developer data in tests. The Compose test profile supplies a dedicated test
   database with no published host port.
 - Add explicit Alembic Python revisions when changing the schema. Preserve the
@@ -121,7 +121,7 @@ parameters supported by Python 3.11. Preserve the lifespan annotation
   and tag. Describe request/response fields and constraints with Pydantic metadata.
 - Use `app/api_contract.py` for shared error/validation schemas and response
   headers. Document actual success and failure statuses on each route, including
-  `401`, applicable permission/not-found/conflict errors, sanitized `422`, and `500`.
+  `401`, applicable permission/not found/conflict errors, sanitized `422`, and `500`.
 - Protected operations use `BearerAuth` and document `WWW-Authenticate: Bearer` on
   `401`; private response status definitions include `Cache-Control: no-store`.
 - Keep `204` responses bodyless. Add `Location` to `201` only when a canonical
@@ -140,21 +140,21 @@ Run checks relevant to the change. Database changes should verify persistence an
 failure rollback. Startup changes should verify the application starts and the
 health endpoint still responds. Report what was verified and any remaining limits.
 Authentication changes should cover registration, generic login failures, token
-expiry and revocation, public-user responses, and `Cache-Control: no-store`.
-Note changes should cover private-note isolation, current team membership,
+expiry and revocation, public user responses, and `Cache-Control: no-store`.
+Note changes should cover private note isolation, current team membership,
 creator access after removal, authenticated ownership, validated input,
-pagination after access filtering, inaccessible-note `404`, and no-store headers.
-Versioned writes should cover stale-save rejection without data changes, stale
-deletes, concurrent saves, membership-removal races, and upgrading existing notes
+pagination after access filtering, inaccessible note `404`, and `no-store` headers.
+Versioned writes should cover stale save rejection without data changes, stale
+deletes, concurrent saves, membership removal races, and upgrading existing notes
 to version 1 without changing their content, ownership, or timestamps.
 
-Team changes should cover cross-team isolation, owner-only mutations, immediate
+Team changes should cover cross team isolation, owner only mutations, immediate
 revocation after removal, owner protection, and atomic team creation.
 
 ## Documentation requirements
 
 - Label loopback documentation URLs as local and state that the API must be
-  running first. Distinguish Docker-only startup from optional host-tool setup,
+  running first. Distinguish Docker only startup from optional host tool setup,
   and keep deployment commands relative to the repository root.
 - Keep public project wording neutral and avoid client names or private context.
 - Include all application source code and tests, plus reproducible setup and test
@@ -165,24 +165,24 @@ revocation after removal, owner protection, and atomic team creation.
 - Keep these sections aligned with implemented behavior as development proceeds;
   clearly distinguish planned work from completed features.
 
-## Read-only note sharing
+## Read only note sharing
 
-- Only personal-note owners or current source-team owners manage grants.
+- Only personal note owners or current source team owners manage grants.
 - Grant destinations must be a current team of the caller; revocation must still
   work after the manager leaves the destination.
 - Use `visible_to` for reading, and keep `writable_to` independent of grants.
-  Recipient membership never permits editing, deletion, or re-sharing.
+  Recipient membership never permits editing, deletion, or resharing.
 - Evaluate access before versions, search, or pagination. Return `404` for
   inaccessible resources and do not duplicate notes shared through several teams.
 - Sharing changes do not increment the content version or update timestamp.
 
-## End-to-end verification
+## End to end verification
 
 - `scripts/demo.py` uses only the standard library and runs inside the API image.
   Verify the full HTTP flow with `docker compose exec -T api python scripts/demo.py`.
 - Keep passwords and bearer tokens out of demo output. Use unique accounts on each
   run; document which demo records remain in the selected database.
-- Preserve Docker-only setup. Include demo scripts in the image and static checks.
+- Preserve Docker only setup. Include demo scripts in the image and static checks.
 - Verify a fresh Compose project and volume; use alternate `API_PORT` and
   `POSTGRES_PORT` values when the development stack is running. Remove only the
   disposable verification project's volume afterward.
@@ -195,30 +195,30 @@ revocation after removal, owner protection, and atomic team creation.
 - Cloud API replicas use `AUTO_MIGRATE=false`; apply Python Alembic revisions with
   the separate migration role/job before readiness checks pass. Never provision
   cloud resources or publish credentials as part of local tests.
-- Preserve shared database login limits, safe 429/503 responses, and Retry-After.
+- Preserve shared database login limits, safe 429/503 responses, and `Retry-After`.
   Trust forwarded client addresses only from the configured ingress boundary.
 - Registration, normal password verification, and dummy verification share the
   nonblocking Argon2 admission gate in `app/security.py`. Preserve the hashing
   parameters and `PASSWORD_HASH_CONCURRENCY` (default 2 per process, range 1–8).
-  Capacity exhaustion returns safe 503 with Retry-After. Budget about 64 MiB per
+  Capacity exhaustion returns safe 503 with `Retry-After`. Budget about 64 MiB per
   concurrent hash plus process overhead; workers multiply this memory use.
 - Keep `/health` independent of the database and `/ready` dependent on connectivity
   and accepted schema revision. Preserve bounded cleanup with `SKIP LOCKED` and
-  active-session retention; expiration checks remain enforced before cleanup.
-- Keep cursor pagination additive, permission-filtered, stable, and bound to the
-  same caller/query. Query-plan diagnostics must report actual planner choices.
+  active session retention; expiration checks remain enforced before cleanup.
+- Keep cursor pagination additive, permission filtered, stable, and bound to the
+  same caller/query. Query plan diagnostics must report actual planner choices.
 - Trigram extension setup is fixed PostgreSQL infrastructure DDL in the Python
   migration; all application queries use SQLAlchemy and no `.sql` files are added.
 - Keep `pg_trgm` in the configured `DB_TRIGRAM_SCHEMA`, outside disposable app/test
   schemas. Reuse its existing namespace; preserve the shared extension during
   downgrades and test cleanup.
-- Keep metrics labels bounded and credential-free; protect cloud metrics scrapes.
+- Keep metrics labels bounded and credential free; protect cloud metrics scrapes.
 - Metrics are per process. Keep one worker per replica unless Prometheus
   multiprocess collection is implemented; scrape each replica separately.
 - Backup tools must reject archive overwrite and same/nonempty restore targets.
-  Preserve URL-option validation, inherited libpq environment cleanup, and the
+  Preserve URL option validation, inherited libpq environment cleanup, and the
   verified, pinned container/database identity check. Keep credentials out of CLI
-  arguments and restore archives transactionally with exit-on-error.
+  arguments and restore archives transactionally with exit on error.
 - Validate load dataset bounds before provisioning Docker resources. Account for
   every planned arrival, including scheduler stalls, so completed plus dropped
   requests equals planned requests; report throttling and version conflicts.
