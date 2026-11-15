@@ -20,7 +20,10 @@ It builds and starts PostgreSQL and the API, applies migrations, then runs the
 complete demonstration with automatically created accounts and bearer sessions.
 Successful checks print `OK` and finish with `Demo passed`; any failed check exits
 with an error. No `.env`, existing account, token, or cloud configuration is needed.
-The API remains available at [Swagger UI](http://127.0.0.1:8000/docs) afterward.
+After startup, open the [local Swagger UI](http://127.0.0.1:8000/docs) on the
+computer running Docker. All `127.0.0.1` URLs in this guide refer to that computer
+and become available when the local API is running. GitHub hosts the project
+source; these links open your locally running service.
 This creates demo records in the local database; see the demo details below.
 
 ## Architecture
@@ -83,9 +86,10 @@ and runs the API as a nonroot user. Compose waits for PostgreSQL and the API's
 HTTP health check to pass. Stop the services with `docker compose down`; the named
 database volume is preserved.
 
-
 The local host ports default to 8000 for the API and 5432 for PostgreSQL. Set
 `API_PORT` and `POSTGRES_PORT` before starting Compose if either is in use. A
+changed `API_PORT` replaces `8000` in the local URLs below; a changed
+`POSTGRES_PORT` replaces `5432` in host database connection URLs. A
 separate disposable demo stack can run alongside the development stack; for
 example, in a POSIX shell:
 
@@ -113,6 +117,9 @@ read-only sharing, permission-aware search and pagination, revocation, deletion,
 and logout. Unexpected statuses or missing no-store headers make it fail with a
 nonzero exit code. Passwords and tokens are never printed.
 
+The demo logs out its generated sessions after the checks. To make requests
+manually, [register your own account and sign in](#register-and-sign-in).
+
 This command writes demo data to the selected database. Three accounts, two
 teams, and one private note remain after a successful run; existing data is not
 removed. Use a disposable stack for a clean demonstration. When running against
@@ -133,6 +140,7 @@ Expected: HTTP `200 OK` with `{"status":"ok"}`.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Confirm the service is running |
+| GET | `/ready` | Check database connectivity and schema readiness |
 | POST | `/auth/register` | Create an account |
 | POST | `/auth/login` | Create a one-hour bearer session |
 | GET | `/auth/me` | Get the authenticated user |
@@ -153,9 +161,20 @@ Expected: HTTP `200 OK` with `{"status":"ok"}`.
 | DELETE | `/notes/{note_id}/shares/{team_id}` | Revoke a managed grant |
 
 The health endpoint reports process liveness; it does not query the database.
+The readiness endpoint checks the database and accepted migration revision,
+returning `503` when the instance is unavailable.
 
-- [Interactive API documentation](http://127.0.0.1:8000/docs)
-- [OpenAPI schema](http://127.0.0.1:8000/openapi.json)
+### Local API documentation
+
+Start the application with the quick-start command before opening these links
+on the same computer:
+
+- [Local interactive API documentation (Swagger UI)](http://127.0.0.1:8000/docs)
+- [Local OpenAPI JSON document](http://127.0.0.1:8000/openapi.json)
+- [Local API reference (ReDoc)](http://127.0.0.1:8000/redoc)
+
+The Swagger UI and ReDoc pages load their interface assets from a CDN, so the
+browser needs internet access to display them.
 
 ### Register and sign in
 
@@ -180,6 +199,10 @@ curl -i http://127.0.0.1:8000/auth/me \
 ```
 
 `/auth/me` returns the same public user fields.
+
+In the local Swagger UI, use **Try it out** on `POST /auth/register`, then
+`POST /auth/login`. Copy the response's `access_token`, click **Authorize**, and
+paste only the token value. Swagger adds the `Bearer` prefix automatically.
 
 Passwords must contain 12–128 characters. Display names are stripped and must
 contain 1–100 characters. Emails are validated and normalized to lowercase.
@@ -569,6 +592,11 @@ python -m scripts.query_plans --user-id 1 --term rarebenchmarkneedle \
   --offset 4000 --analyze --output work/query-plans.json
 ```
 
+This host command requires Python 3.11+ and the project dependencies. Create and
+activate the virtual environment as shown in [Optional host development](#optional-host-development),
+then set `DATABASE_URL` for the selected database. The diagnostic connects
+directly to PostgreSQL.
+
 The diagnostic uses real `EXPLAIN (ANALYZE, BUFFERS)` results and records which
 indexes PostgreSQL actually chose. It does not disable sequential scans or claim
 that every query should use an index.
@@ -623,6 +651,9 @@ scheduling lag and dropped arrivals, errors, version conflicts, throttling, samp
 lock waits. Sampling may miss brief peaks. Choose acceptance budgets before making
 a production capacity claim.
 
+The load driver requires Python 3.11+ and Docker Compose on the host. It uses
+Python's standard library; application dependencies run inside its containers.
+
 ```sh
 python3 -m scripts.load_test --duration 15 --rate 50 --concurrency 16 \
   --users 8 --notes 10000 --output work/load-test-report.json
@@ -649,7 +680,9 @@ and varies with cache state and data distribution; it is separate from HTTP late
 credentials read from environment variables. It refuses to overwrite an existing
 backup or restore into a nonempty/same database. Restore is one transaction and
 stops on errors. Use PostgreSQL 18 client tools on a cloud operations host, or the
-local database container's tools with `--db-container`:
+local database container's tools with `--db-container`. The Python wrapper
+requires the project dependencies in an activated host virtual environment; see
+[Optional host development](#optional-host-development).
 
 Put host, port, database, and credentials in the URL's main fields. Routing
 overrides in query parameters are rejected, and the host process's inherited
@@ -658,10 +691,15 @@ that this endpoint and the pinned container reach the same database before
 running PostgreSQL tools. Native tools support the configured cloud URL and TLS
 options without a Docker connection.
 
+For a running local Compose database, use the following in a POSIX shell. First
+provision a separate empty recovery database and set `DATABASE_URL` and
+`RESTORE_DATABASE_URL` to the source and recovery databases. Both URLs must reach
+this container through its published loopback port and use different database names:
+
 ```sh
-# Set DATABASE_URL and RESTORE_DATABASE_URL to separate source/empty target DBs.
-python -m scripts.backup_restore dump --archive work/notes.dump --db-container DB_CONTAINER
-python -m scripts.backup_restore restore --archive work/notes.dump --db-container DB_CONTAINER
+DB_CONTAINER="$(docker compose ps -q db)"
+python -m scripts.backup_restore dump --archive work/notes.dump --db-container "$DB_CONTAINER"
+python -m scripts.backup_restore restore --archive work/notes.dump --db-container "$DB_CONTAINER"
 python -m scripts.backup_restore compare
 ```
 
@@ -673,7 +711,7 @@ backup retention/encryption, and managed failover procedures.
 ## Verify
 
 The source snapshot audited on November 15, 2026 passed
-206 tests, including 41 focused migration checks, plus dependency validation,
+207 tests, including 41 focused migration checks, plus dependency validation,
 Ruff, Pyright, and deprecation checks. The existing laptop database also restarted
 successfully with unchanged note contents and row counts.
 
@@ -742,10 +780,11 @@ with Python 3.11 and 3.12. The lifespan function is annotated
 ## REST and OpenAPI contract
 
 The application generates OpenAPI 3.1 from the same route declarations and
-Pydantic models used at runtime. Use [Swagger UI](http://127.0.0.1:8000/docs) to
-try requests, [ReDoc](http://127.0.0.1:8000/redoc) to read the reference, or
-[the JSON schema](http://127.0.0.1:8000/openapi.json) to generate a client. In Swagger
-UI, sign in through `/auth/login`, then paste the returned token into **Authorize**.
+Pydantic models used at runtime. After starting the server, use the
+[local API documentation](#local-api-documentation) to try requests in Swagger UI,
+read the ReDoc reference, or obtain the OpenAPI document for client generation.
+For protected requests, register an account, sign in through `/auth/login`, then
+paste only the returned `access_token` into **Authorize**.
 Each operation has an explicit stable ID, descriptions, success/error models,
 parameter constraints, and applicable response headers.
 
@@ -810,6 +849,7 @@ app/
   sharing.py        # Revocable read-only recipient-team grants
   security.py       # Password hashing and token helpers
   teams.py          # Team and owner-managed membership routes
+  validation.py     # Shared PostgreSQL-text and password-encoding validation
 tests/
   test_api_contract.py # OpenAPI validation and HTTP/schema consistency
   test_auth.py      # Authentication HTTP integration tests
@@ -829,6 +869,7 @@ tests/
   test_hash_capacity.py # Shared password-hashing memory admission
   test_backup_tools.py # Safe backup/restore boundaries and credentials
   test_load_tools.py # Load-tool input and scheduling behavior
+  test_text_validation.py # Invalid text rejection and password round trips
 scripts/
   demo.py           # Complete HTTP demonstration using the standard library
   migrate.py        # Separate cloud migration command

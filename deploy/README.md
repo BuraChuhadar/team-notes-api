@@ -1,5 +1,8 @@
 # Deployment profiles
 
+Run commands from the repository root. All file paths below are relative to that
+directory.
+
 The default Compose file is the one-command laptop setup. The scale overlay adds
 two API containers behind a local gateway and a separate migration service:
 
@@ -25,27 +28,29 @@ settings appropriate to your provider and configure its high availability,
 backups, connection limit, and restore policy separately.
 
 1. Build and push the runtime image for the target platform. Update
-   `kubernetes/kustomization.yaml` and the migration Job's image from
+   `deploy/kubernetes/kustomization.yaml` and the migration Job's image from
    `notes-api:local` to the same immutable registry tag or digest.
 2. Create the `notes-api-credentials` Secret in your namespace with a runtime
    `DATABASE_URL` and a separate strong `METRICS_TOKEN`. Use a PostgreSQL role with
    data access and sequence usage, but no schema-creation privilege. Create a
    separate `notes-migration-credentials` Secret containing `DATABASE_URL` for
    the schema-owner/migration role. Keep actual values out of these files and
-   source control. Apply `kubernetes/configmap.yaml`.
+   source control. Apply `deploy/kubernetes/configmap.yaml`.
 3. If `pg_trgm` is already installed, set `DB_TRIGRAM_SCHEMA` in the ConfigMap to
    that existing namespace. Otherwise the migration job creates it in
    `notes_extensions`; only the migration role needs database/schema CREATE
    privilege. Grant the runtime role usage of the extension schema as required
    by your provider and read/write access to the resulting application tables.
-4. For a first deployment, apply `kubernetes/migrate-job.yaml`, then wait for the
-   Job to complete before applying `kubectl apply -k deploy/kubernetes`. For
+4. For a first deployment, apply `deploy/kubernetes/migrate-job.yaml`, then
+   wait for the Job to complete before running
+   `kubectl apply -k deploy/kubernetes`. For
    subsequent releases, follow the compatibility sequence below. Recreate the
    completed migration Job with the new image for each release. The job does not
    use API request timeouts; it has its own bounded migration timeout.
 5. Configure an ingress/load balancer and TLS for the Service. The optional
-   `ingress.example.yaml` shows explicit public paths and keeps `/metrics`
-   private. Configure the API's trusted proxy addresses for the chosen ingress.
+   `deploy/kubernetes/ingress.example.yaml` shows explicit public paths and keeps
+   `/metrics` private. Configure the API's trusted proxy addresses for the chosen
+   ingress.
 
 ### Database roles and grants
 

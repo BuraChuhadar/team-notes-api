@@ -153,6 +153,10 @@ revocation after removal, owner protection, and atomic team creation.
 
 ## Documentation requirements
 
+- Label loopback documentation URLs as local and state that the API must be
+  running first. Distinguish Docker-only startup from optional host-tool setup,
+  and keep deployment commands relative to the repository root.
+- Keep public project wording neutral and avoid client names or private context.
 - Include all application source code and tests, plus reproducible setup and test
   commands in README.md.
 - Document two or three design decisions that required the most thought, why they
