@@ -27,11 +27,15 @@
 - Dockerfile builds the API image; Docker Compose runs the API and database.
 - The schema includes users, teams, memberships, notes, and authentication sessions.
 - Registration, login, current-user lookup, and logout are implemented under
-  `/auth`. Team creation, listing, and membership routes are implemented under
-  `/teams`; note endpoints are future increments.
-- Team membership writes require the owner role; all members can view their roster.
-  Outsiders receive `404`. Always create a team and owner membership atomically.
-  Add users only as members; reject owner removal and client-supplied roles.
+  `/auth`. Note creation, listing, and reading are implemented under `/notes`.
+- Private notes are owner-only. Team-note access requires current membership,
+  including for the original creator; membership removal revokes that access.
+- Team creation, listing, and membership routes are implemented under `/teams`.
+  Only owners can add or remove members; all members can view their roster.
+  Outsiders receive `404`. Create teams and owner memberships atomically; reject
+  owner removal and client-supplied roles.
+- Note editing/deletion, search, and explicit sharing across teams are future
+  increments.
 - Passwords use Argon2id; opaque bearer tokens are stored only as SHA-256 hashes.
   Sessions expire after one hour and logout revokes the current token.
 
@@ -85,6 +89,9 @@ failure rollback. Startup changes should verify the application starts and the
 health endpoint still responds. Report what was verified and any remaining limits.
 Authentication changes should cover registration, generic login failures, token
 expiry and revocation, public-user responses, and `Cache-Control: no-store`.
+Note changes should cover private-note isolation, current team membership,
+creator access after removal, authenticated ownership, validated input,
+pagination after access filtering, inaccessible-note `404`, and no-store headers.
 
 Team changes should cover cross-team isolation, owner-only mutations, immediate
 revocation after removal, owner protection, and atomic team creation.

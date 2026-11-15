@@ -2,9 +2,10 @@
 
 A FastAPI REST service for a note-taking product shared across teams.
 
-The service includes authentication, team and membership management, a health
-endpoint, and PostgreSQL persistence through typed SQLAlchemy models and Alembic
-migrations. Note endpoints will follow in focused increments.
+The service includes authentication, team and membership management, note creation
+and reading, a health endpoint, and PostgreSQL persistence with versioned
+migrations. Notes can be private or scoped to an existing team membership. Note
+editing and deletion will follow in small, reviewable steps.
 
 ## Run locally
 
@@ -40,6 +41,9 @@ Expected: HTTP `200 OK` with `{"status":"ok"}`.
 | GET | `/teams/{team_id}/members` | View a team roster as a member |
 | POST | `/teams/{team_id}/members` | Add a registered user as a member (owner only) |
 | DELETE | `/teams/{team_id}/members/{user_id}` | Remove a member (owner only) |
+| POST | `/notes` | Create a private or team note |
+| GET | `/notes` | List notes visible to the authenticated user |
+| GET | `/notes/{id}` | Read a visible note |
 
 The health endpoint reports process liveness; it does not query the database.
 
@@ -81,15 +85,51 @@ expire after one hour, and are stored only as SHA-256 hashes. These are revocabl
 database sessions, with no JWT or signing-secret configuration. Authentication
 responses use `Cache-Control: no-store`.
 
-### Log out when finished
+### Create and read notes
+
+Use the token from login to create a private note and list visible notes:
 
 ```sh
-curl -i -X POST http://127.0.0.1:8000/auth/logout \
+curl -i http://127.0.0.1:8000/notes \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Meeting notes","content":"Agree on next steps."}'
+
+curl -i 'http://127.0.0.1:8000/notes?limit=50&offset=0' \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-Logout returns an empty `204` response and immediately revokes that token;
-using it afterward returns `401`.
+Creation returns `201`, a `Location: /notes/{id}` header, and the note's `id`,
+`owner_id`, `team_id`, `title`, `content`, `created_at`, and `updated_at`. Copy the
+returned `id` into `NOTE_ID` to read that note:
+
+```sh
+NOTE_ID=1 # Replace with the id returned by creation.
+curl -i "http://127.0.0.1:8000/notes/$NOTE_ID" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Titles are stripped and must contain 1–200 characters. Content defaults to an
+empty string, preserves whitespace, and accepts up to 100,000 characters. The
+owner is always the authenticated user; clients cannot choose `owner_id`.
+Omitting `team_id`, or setting it to `null`, creates a private note. A supplied
+team ID must be a positive integer, without string or boolean coercion. Invalid
+input and unknown fields return `422`.
+
+Private notes are visible only to their owner. Supplying a team ID requires
+current membership in that team; both `owner` and `member` roles can create and
+read team notes. Unknown teams and teams the caller does not belong to return
+`404`. Losing team membership also removes access to team notes the user
+originally created. Private notes are not automatically shared with teams.
+
+Listing returns a plain JSON array containing the caller's private notes and
+notes for teams they currently belong to. `limit` defaults to 50 and accepts
+1–100; `offset` defaults to 0 and must be nonnegative. Reading a missing or
+inaccessible note returns the same `404` response. Note responses use
+`Cache-Control: no-store`.
+
+This increment does not include editing, deletion, search, explicit sharing
+across teams.
 
 ### Teams and membership
 
@@ -200,8 +240,9 @@ The schema contains:
 | `alembic_version` | Current Alembic revision |
 
 Foreign keys preserve relationships, and timestamps use PostgreSQL
-`timestamptz`. Revision `002_sessions` adds authentication storage. Team and note
-API routes are not exposed yet.
+`timestamptz`. Revision `002_sessions` adds authentication storage. Note routes
+check the caller's current membership. Note creation and reading use the existing
+schema. Team routes enforce current membership and owner permissions.
 
 ## Verify
 
@@ -277,6 +318,7 @@ app/
   main.py           # Application and health endpoint
   migrations/       # Versioned Alembic Python revisions
   models.py         # Typed SQLAlchemy database models
+  notes.py          # Note creation, listing, and reading
   security.py       # Password hashing and token helpers
   teams.py          # Team and owner-managed membership routes
 tests/
@@ -284,6 +326,7 @@ tests/
   test_teams.py     # Team authorization and membership integration tests
   test_database.py  # Connection and persistence behavior tests
   test_migrations.py # Migration behavior tests
+  test_notes.py     # Note HTTP integration and access-control tests
 AGENTS.md           # Development instructions
 Dockerfile          # Runtime and test container stages
 compose.yaml        # API, PostgreSQL, and isolated test services
@@ -320,22 +363,25 @@ These decisions describe implemented behavior; planned extensions are below.
    expressions keep queries consistent with the Python models and let the driver
    bind values. Sessions commit successful work, roll back failures, and return
    connections to the pool. Reviewed Alembic revisions and an advisory lock
-   preserve atomic schema upgrades and track applied revisions. The tradeoffs are an ORM and migration dependency, pool lifecycle
+   preserve atomic schema upgrades and track applied revisions. The tradeoffs
+   are an ORM and migration dependency, pool lifecycle
    management, and maintaining explicit revisions alongside model changes.
 2. **Argon2id passwords and revocable opaque sessions.** Argon2id provides password
    hashing, while random bearer tokens are stored only as SHA-256 hashes. Sessions
    expire after one hour and logout revokes them immediately. This avoids JWT
    signing-key management and delayed revocation, at the cost of a database lookup
    for each authenticated request and password-hashing work during login.
-3. **Docker-based persistence and API verification.** The test image runs
-   dependency, lint, and type checks before exercising the actual PostgreSQL
-   schema in isolated test schemas. Authentication tests cover generic login
-   failures, session expiry and revocation, and public response fields. This
-   keeps developer data separate, at the cost of container startup time.
+3. **Membership-filtered note queries.** Private-note access checks ownership;
+   team-note access checks current membership, including for the original
+   creator. This makes membership removal take effect on subsequent reads without
+   copying access lists onto each note. Filtering also happens before pagination,
+   and missing and inaccessible notes share a `404` response. The tradeoff is more
+   involved queries and a membership lookup for team access; these are covered by
+   API tests against isolated PostgreSQL schemas.
 
 ## What I would change, add, or stop with more time
 
-The planned core still includes note CRUD and sharing.
+The planned core still includes note editing and deletion.
 Beyond that core, I would prioritize:
 
 - **Change:** Tune connection-pool sizing and indexes when measured traffic and
