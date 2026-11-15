@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.auth import router as auth_router
 from app.database import get_engine, init_database
 from app.notes import router as notes_router
+from app.sharing import router as sharing_router
 from app.teams import router as teams_router
 
 
@@ -30,6 +31,7 @@ app = FastAPI(
 )
 app.include_router(auth_router)
 app.include_router(notes_router)
+app.include_router(sharing_router)
 app.include_router(teams_router)
 
 

@@ -29,8 +29,9 @@
 - Registration, login, current-user lookup, and logout are implemented under
   `/auth`. Note creation, listing, reading, updates, and deletion are implemented
   under `/notes`.
-- Private notes are owner-only. Team-note access requires current membership,
-  including for the original creator; membership removal revokes that access.
+- Personal notes are owner-only unless explicitly shared read-only. Source-team
+  access requires current membership, including for the original creator; removal
+  revokes that source access. Independent recipient grants remain read-only.
 - Team creation, listing, and membership routes are implemented under `/teams`.
   Only owners can add or remove members; all members can view their roster.
   Outsiders receive `404`. Create teams and owner memberships atomically; reject
@@ -112,3 +113,14 @@ revocation after removal, owner protection, and atomic team creation.
 - Explain what would be changed, added, or stopped with more time.
 - Keep these sections aligned with implemented behavior as development proceeds;
   clearly distinguish planned work from completed features.
+
+## Read-only note sharing
+
+- Only personal-note owners or current source-team owners manage grants.
+- Grant destinations must be a current team of the caller; revocation must still
+  work after the manager leaves the destination.
+- Use `visible_to` for reading, and keep `writable_to` independent of grants.
+  Recipient membership never permits editing, deletion, or re-sharing.
+- Evaluate access before versions, search, or pagination. Return `404` for
+  inaccessible resources and do not duplicate notes shared through several teams.
+- Sharing changes do not increment the content version or update timestamp.

@@ -44,6 +44,10 @@ Expected: HTTP `200 OK` with `{"status":"ok"}`.
 | POST | `/notes` | Create a private or team note |
 | GET | `/notes` | List notes visible to the authenticated user |
 | GET | `/notes/{id}` | Read a visible note |
+| POST | `/notes/{note_id}/shares` | Grant a team read-only note access |
+| GET | `/notes/{note_id}/shares` | List grants as the note manager |
+| GET | `/notes/{note_id}/shares/{team_id}` | Read one grant as the note manager |
+| DELETE | `/notes/{note_id}/shares/{team_id}` | Revoke a team grant |
 | PUT | `/notes/{id}` | Save a note using its current version |
 | DELETE | `/notes/{id}?version={version}` | Delete a note using its current version |
 
@@ -118,7 +122,8 @@ Omitting `team_id`, or setting it to `null`, creates a private note. A supplied
 team ID must be a positive integer, without string or boolean coercion. Invalid
 input and unknown fields return `422`.
 
-Private notes are visible only to their owner. Supplying a team ID requires
+Personal notes are initially owner-only; explicit grants can add read-only team access.
+Supplying a team ID requires
 current membership in that team; both `owner` and `member` roles can create and
 read team notes. Unknown teams and teams the caller does not belong to return
 `404`. Losing team membership also removes access to team notes the user
@@ -242,6 +247,43 @@ curl -i -X POST http://127.0.0.1:8000/auth/logout \
 Logout returns an empty `204` response and immediately revokes that token;
 using it afterward returns `401`.
 
+### Share notes read-only with another team
+
+A personal-note owner or a current owner of a note's source team can manage its
+shares. Ordinary source-team members, including the original author, cannot
+manage team-note shares. To grant access, the caller must also currently belong
+to the recipient team. Create a recipient team or use one from `GET /teams`, then
+substitute its returned ID below:
+
+```sh
+RECIPIENT_TEAM_ID=2 # Replace with an existing team you currently belong to.
+curl -i "http://127.0.0.1:8000/notes/$NOTE_ID/shares" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"team_id\":$RECIPIENT_TEAM_ID}"
+
+curl -i "http://127.0.0.1:8000/notes/$NOTE_ID/shares" \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -i -X DELETE "http://127.0.0.1:8000/notes/$NOTE_ID/shares/$RECIPIENT_TEAM_ID" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Creation returns `201` with `note_id`, `team_id`, and `created_at`. Its `Location`
+identifies an individual grant that its manager can retrieve with `GET`.
+Recipient-team members can read the note and see it in their note listing; the
+grant never permits editing, deletion, or re-sharing. Losing recipient membership
+or revoking the grant removes that read access on subsequent requests. Independent
+source membership or another grant can still provide access. Managers may revoke
+a grant after leaving its recipient team. Sharing changes neither the content
+version nor its update timestamp.
+
+Share listing is manager-only, with the same `limit` and `offset` bounds as note
+listing. It orders by creation time descending, then recipient team ID descending.
+Missing or unmanaged notes return `404`; duplicate grants and attempts to share
+back to the source team return `409`. Revocation returns an empty `204`. All share
+responses, including errors, use `Cache-Control: no-store`.
+
 ## Database
 
 The service uses SQLAlchemy 2.1's typed ORM with PostgreSQL and the Psycopg 3
@@ -283,6 +325,7 @@ The schema contains:
 | `memberships` | User membership in teams, with `owner` or `member` roles |
 | `notes` | Notes with a required user owner and an optional team |
 | `sessions` | Hashed bearer tokens, user ownership, and expiration |
+| `note_shares` | Read-only grants to recipient teams |
 | `alembic_version` | Current Alembic revision |
 
 Foreign keys preserve relationships, and timestamps use PostgreSQL
@@ -366,6 +409,7 @@ app/
   models.py         # Typed SQLAlchemy database models
   notes.py          # Note creation, listing, and reading
   security.py       # Password hashing and token helpers
+  sharing.py        # Manager-controlled read-only note grants
   teams.py          # Team and owner-managed membership routes
 tests/
   test_auth.py      # Authentication HTTP integration tests
@@ -373,6 +417,7 @@ tests/
   test_database.py  # Connection and persistence behavior tests
   test_migrations.py # Migration behavior tests
   test_notes.py     # Note HTTP integration and access-control tests
+  test_sharing.py   # Read-only sharing and revocation integration tests
 AGENTS.md           # Development instructions
 Dockerfile          # Runtime and test container stages
 compose.yaml        # API, PostgreSQL, and isolated test services

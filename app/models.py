@@ -136,3 +136,20 @@ class AuthSession(Base):
         DateTime(timezone=True), server_default=func.current_timestamp()
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class NoteShare(Base):
+    """A read-only grant to all current members of a recipient team."""
+
+    __tablename__ = "note_shares"
+    __table_args__ = (Index("note_shares_team_id_idx", "team_id"),)
+
+    note_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("notes.id", ondelete="CASCADE"), primary_key=True
+    )
+    team_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.current_timestamp()
+    )

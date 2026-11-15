@@ -11,7 +11,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.auth import UserResponse, get_current_user
 from app.database import get_session
-from app.models import Membership, Note
+from app.models import Membership, Note, NoteShare
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 MAX_BIGINT = 2**63 - 1
@@ -27,7 +27,13 @@ def writable_to(user_id: int) -> ColumnElement[bool]:
 
 
 def visible_to(user_id: int) -> ColumnElement[bool]:
-    return writable_to(user_id)
+    shared_with_team = (
+        select(NoteShare.note_id)
+        .join(Membership, Membership.team_id == NoteShare.team_id)
+        .where(NoteShare.note_id == Note.id, Membership.user_id == user_id)
+        .exists()
+    )
+    return or_(writable_to(user_id), shared_with_team)
 
 
 class NoteCreate(BaseModel):
