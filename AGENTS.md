@@ -162,3 +162,21 @@ revocation after removal, owner protection, and atomic team creation.
 - Verify a fresh Compose project and volume; use alternate `API_PORT` and
   `POSTGRES_PORT` values when the development stack is running. Remove only the
   disposable verification project's volume afterward.
+
+## Production safeguards
+
+- Keep validated pool/timeout configuration in `app/config.py`; budget connections
+  across workers, replicas, rollout surge, and maintenance before increasing limits.
+- Cloud API replicas use `AUTO_MIGRATE=false`; apply Python Alembic revisions with
+  the separate migration role/job before readiness checks pass. Never provision
+  cloud resources or publish credentials as part of local tests.
+- Preserve shared database login limits, safe 429/503 responses, and Retry-After.
+  Trust forwarded client addresses only from the configured ingress boundary.
+- Keep cursor pagination additive, permission-filtered, stable, and bound to the
+  same caller/query. Query-plan diagnostics must report actual planner choices.
+- Trigram extension setup is fixed PostgreSQL infrastructure DDL in the Python
+  migration; all application queries use SQLAlchemy and no `.sql` files are added.
+- Keep metrics labels bounded and credential-free; protect cloud metrics scrapes.
+- Run load/backup recovery tools only on disposable datasets during verification.
+  Report actual latency/errors/connections/locks and environment, never an invented
+  production capacity. Preserve existing developer databases and cloud resources.

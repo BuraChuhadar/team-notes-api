@@ -1,0 +1,18 @@
+# Optional: requires the Prometheus Operator CRDs. Scrape every API pod separately.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: notes-api
+spec:
+  selector:
+    matchLabels:
+      app: notes-api
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      authorization:
+        type: Bearer
+        credentials:
+          name: notes-api-credentials
+          key: METRICS_TOKEN

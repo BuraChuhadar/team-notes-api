@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from psycopg.errors import UniqueViolation
 from pydantic import (
@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api_contract import api_responses
 from app.database import get_session
 from app.models import AuthSession, User
+from app.rate_limit import try_consume_login_attempt
 from app.security import (
     DUMMY_PASSWORD_HASH,
     generate_token,
@@ -209,13 +210,21 @@ def register(payload: RegisterRequest) -> UserResponse:
     description=(
         "Return a one-hour opaque bearer token. Unknown email addresses and incorrect "
         "passwords return the same generic 401 response. The token is returned only "
-        "here and is stored as a hash."
+        "here and is stored as a hash. Account and source-address budgets limit "
+        "password verification attempts. A 429 response supplies Retry-After in seconds."
     ),
     responses=api_responses(
-        errors={401: "Invalid authentication credentials."}, validation=True
+        errors={
+            401: "Invalid authentication credentials.",
+            429: "The account or source-address login budget is exhausted. Retry after the documented delay.",
+        },
+        validation=True,
     ),
 )
-def login(payload: LoginRequest) -> TokenResponse:
+def login(payload: LoginRequest, request: Request) -> TokenResponse:
+    # Trust only the ASGI peer selected by the server proxy configuration.
+    client_host = request.client.host if request.client is not None else "unknown"
+    try_consume_login_attempt(str(payload.email), client_host)
     with get_session() as session:
         user = session.scalar(
             select(User).where(func.lower(User.email) == str(payload.email))

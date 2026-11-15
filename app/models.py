@@ -9,12 +9,21 @@ from sqlalchemy import (
     ForeignKey,
     Identity,
     Index,
+    Integer,
     Text,
     column,
     func,
     literal,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.dialects import postgresql
+
+from app.config import get_settings
+
+TRIGRAM_SCHEMA = get_settings().db_trgm_schema
+TRIGRAM_OPCLASS = (
+    f"{postgresql.dialect().identifier_preparer.quote(TRIGRAM_SCHEMA)}.gin_trgm_ops"
+)
 
 
 class Base(DeclarativeBase):
@@ -94,6 +103,33 @@ class Note(Base):
         CheckConstraint(column("version") > 0, name="notes_version_check"),
         Index("notes_owner_id_idx", "owner_id"),
         Index("notes_team_id_idx", "team_id"),
+        Index("notes_created_id_idx", column("created_at").desc(), column("id").desc()),
+        Index(
+            "notes_owner_created_id_idx",
+            "owner_id",
+            column("created_at").desc(),
+            column("id").desc(),
+            postgresql_where=column("team_id").is_(None),
+        ),
+        Index(
+            "notes_team_created_id_idx",
+            "team_id",
+            column("created_at").desc(),
+            column("id").desc(),
+            postgresql_where=column("team_id").is_not(None),
+        ),
+        Index(
+            "notes_title_trgm_idx",
+            "title",
+            postgresql_using="gin",
+            postgresql_ops={"title": TRIGRAM_OPCLASS},
+        ),
+        Index(
+            "notes_content_trgm_idx",
+            "content",
+            postgresql_using="gin",
+            postgresql_ops={"content": TRIGRAM_OPCLASS},
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
@@ -153,3 +189,21 @@ class NoteShare(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.current_timestamp()
     )
+
+
+class LoginThrottle(Base):
+    """Shared login-attempt counters, keyed by hashed account or client identity."""
+
+    __tablename__ = "login_throttles"
+    __table_args__ = (
+        CheckConstraint(column("attempts") > 0, name="login_throttles_attempts_check"),
+        CheckConstraint(
+            column("subject_hash").regexp_match("^[0-9a-f]{64}$"),
+            name="login_throttles_subject_hash_check",
+        ),
+        Index("login_throttles_window_idx", "window_started_at"),
+    )
+
+    subject_hash: Mapped[str] = mapped_column(Text, primary_key=True)
+    window_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer)

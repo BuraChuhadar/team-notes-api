@@ -1,0 +1,6 @@
+# Used only by scripts/load_test.py with a unique throwaway Compose project.
+services:
+  db:
+    volumes: !reset []
+    tmpfs:
+      - /var/lib/postgresql

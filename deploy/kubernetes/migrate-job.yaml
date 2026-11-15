@@ -1,0 +1,48 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: notes-api-migrate
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: notes-api:local
+          imagePullPolicy: IfNotPresent
+          command: [python, -m, scripts.migrate]
+          envFrom:
+            - configMapRef:
+                name: notes-api-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: notes-migration-credentials
+                  key: DATABASE_URL
+            - name: DB_POOL_SIZE
+              value: "1"
+            - name: DB_MAX_OVERFLOW
+              value: "0"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]

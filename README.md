@@ -9,28 +9,35 @@ and publishes a generated OpenAPI reference.
 
 ## Architecture
 
-The current Docker Compose deployment runs one API service and one PostgreSQL
-service. OpenAPI is generated from the route declarations and Pydantic models.
+The default Docker Compose deployment runs one API service and one PostgreSQL
+service. The scale profile runs two API replicas behind NGINX; the cloud manifests
+use an external PostgreSQL service. OpenAPI is generated from route declarations
+and Pydantic models.
 
 ```mermaid
 flowchart TD
-    Client["Client or Swagger UI"] -->|"HTTP / JSON"| API["FastAPI / Uvicorn<br/>Routing, validation, safe errors"]
+    Client["Client or Swagger UI"] -->|"HTTP / JSON"| API["FastAPI / Uvicorn<br/>One worker per replica"]
+    Client -.-> Gateway["Scale profile: NGINX<br/>Cloud: ingress with TLS"]
+    Gateway --> API
     API -->|"Protected operations"| Auth["Bearer authentication<br/>Database-backed session lookup"]
     API -->|"Register or sign in"| Routes["Route modules<br/>Auth, teams, notes, sharing"]
     Auth -->|"Authenticated user"| Routes
-    API -->|"Public health check"| Health["/health<br/>Process liveness only"]
+    API -->|"Public health check"| Health["/health: process liveness<br/>/ready: database and schema"]
+    API -.-> Metrics["Per-replica Prometheus metrics<br/>Private cloud scrape with bearer token"]
+    Health -->|"Only /ready"| Pool
     API -->|"Public reference"| Docs["Generated OpenAPI<br/>/openapi.json, /docs, /redoc"]
     Routes -.->|"Routes and Pydantic models"| Docs
 
     Auth -->|"Authentication transaction"| Tx["SQLAlchemy ORM<br/>get_session / Session.begin<br/>Commit or rollback, then close"]
     Routes -->|"Business transaction"| Tx
+    Maintenance["Session cleanup CronJob"] --> Tx
     Tx --> Pool["Engine connection pool<br/>Per process and URL / Psycopg"]
 
-    Lifecycle["Application lifespan"] -->|"Startup"| Migrate["Alembic revisions<br/>engine.begin and advisory lock"]
+    Lifecycle["Local startup or cloud release Job"] --> Migrate["Alembic revisions<br/>engine.begin and advisory lock"]
     Migrate --> Pool
     Lifecycle -.->|"Shutdown: dispose pool"| Pool
-    Pool --> DB[("PostgreSQL<br/>users, teams, memberships<br/>notes, note_shares, sessions<br/>alembic_version")]
-    DB --- Volume["Persistent Docker volume"]
+    Pool --> DB[("PostgreSQL<br/>users, teams, memberships<br/>notes, note_shares, sessions<br/>login_throttles, alembic_version")]
+    DB --- Volume["Laptop: persistent Docker volume<br/>Cloud: provider storage and backups"]
 ```
 
 Each call to `get_session()` creates its own session and transaction. Successful
@@ -41,9 +48,10 @@ transaction to store the new session.
 
 Note updates and deletion combine row locks with version checks; stale versions
 return `409`. Membership locks protect relevant authorization checks through the
-write transaction. Startup applies migrations in a separate engine transaction
-under a PostgreSQL advisory lock. The health endpoint checks process liveness;
-startup must complete migrations before the application begins serving requests.
+write transaction. Local startup applies migrations in a separate engine
+transaction under a PostgreSQL advisory lock. Cloud replicas use `AUTO_MIGRATE=false`
+and require a successful separate migration Job. `/health` checks process liveness;
+`/ready` checks the database connection and expected schema revision.
 
 ## Run locally
 
@@ -435,6 +443,7 @@ The schema contains:
 | `notes` | Notes with an owner, optional source team, and optimistic version |
 | `note_shares` | Revocable read-only grants to current recipient-team members |
 | `sessions` | Hashed bearer tokens, user ownership, and expiration |
+| `login_throttles` | Shared hashed account/address login budgets |
 | `alembic_version` | Current Alembic revision |
 | `schema_migrations` | Preserved migration history on upgraded legacy databases |
 
@@ -447,6 +456,187 @@ Team routes enforce current membership and owner permissions.
 
 Any earlier `data/notes.db` file is left untouched. Its contents are not imported,
 and `NOTES_DB_PATH` is no longer used.
+
+## Production safeguards and measurement
+
+These safeguards are implemented for the development project and can be exercised
+on the laptop. Cloud deployment uses the same image and API behavior; the manifests
+require an external PostgreSQL service and real deployment secrets. Capacity and
+high-availability objectives still require measurements in the chosen environment.
+
+### Database limits and release operations
+
+Each API process has a bounded connection pool. Environment settings are validated
+at startup/configuration use; existing URL options such as a test schema search
+path are preserved. Defaults are:
+
+| Setting | Default | Purpose |
+| --- | ---: | --- |
+| `DB_POOL_SIZE` | 5 | Persistent connections per process |
+| `DB_MAX_OVERFLOW` | 5 | Additional connections under bursts |
+| `DB_POOL_TIMEOUT_SECONDS` | 3 | Maximum pool wait |
+| `DB_CONNECT_TIMEOUT_SECONDS` | 5 | Connection establishment timeout |
+| `DB_STATEMENT_TIMEOUT_MS` | 10000 | Bound request SQL execution |
+| `DB_LOCK_TIMEOUT_MS` | 3000 | Bound lock waits |
+| `DB_IDLE_TRANSACTION_TIMEOUT_MS` | 15000 | End abandoned idle transactions |
+| `DB_MIGRATION_TIMEOUT_MS` | 120000 | Separate bounded DDL budget |
+| `DB_TRIGRAM_SCHEMA` | `notes_extensions` | Namespace containing `pg_trgm` |
+| `AUTO_MIGRATE` | `true` | Local convenience; `false` for cloud API replicas |
+| `DB_COMPATIBLE_REVISIONS` | empty | Explicit reviewed compatibility allowances during additive rollouts |
+
+Transactions roll back on query/lock failures. Temporary pool/database resource
+failures return safe JSON `503` responses with `Retry-After`; the application does
+not automatically replay writes with uncertain outcomes. Pool liveness checks
+recover stale connections on checkout. `/ready` returns `503` for a database or
+migration mismatch, while `/health` remains a process-liveness probe.
+
+The scale overlay has two single-worker API containers, each with a maximum of
+10 connections. Kubernetes adds one rolling-update surge pod; terminating pods
+may retain their pools while draining. With an allowance for two draining pods,
+plan `(2 + 1 + 2) × 1 × (5 + 5) = 50` API connections, plus migration,
+maintenance, monitoring, and administrative reserves. This is a planning budget,
+not a hard global cap. Recalculate it when changing replicas or rollout/drain
+behavior, and keep the total below PostgreSQL's connection limit. The deployment
+guide includes explicit migration-owner/runtime-role grants and a nonowner CRUD
+verification flow.
+Readiness accepts only the image's own migration head by default. Reviewed additive
+rollouts can explicitly allow a declared future revision; follow the staged
+compatibility procedure in the deployment guide before migrating old pods.
+
+```sh
+docker compose -f compose.yaml -f compose.scale.yaml up --build -d --wait
+```
+
+Use an independent Compose project and unused port settings when keeping the
+normal stack running. See [deployment instructions](deploy/README.md) for portable
+Kubernetes manifests, migration-before-rollout commands, secrets, resource limits,
+readiness/liveness probes, TLS ingress, and per-pod metrics scraping. Local
+PostgreSQL is one instance; cloud database high availability and managed backups
+are configured through the selected database provider.
+
+### Indexed queries and cursor pagination
+
+Alembic revision `005_query_indexes` adds ordered global/owner/source-team indexes
+and GIN trigram indexes for title/content substring search. PostgreSQL's trusted
+`pg_trgm` extension is installed in `notes_extensions` if missing. If a managed
+database already installs it elsewhere, set `DB_TRIGRAM_SCHEMA` to that schema
+before migrations and application startup; existing extensions are never moved.
+Only the migration role needs creation privileges. Queries as short as one or two
+characters may still scan many rows; actual query plans determine usefulness.
+
+`GET /notes` retains its array response and offset parameters, and also accepts an
+opaque `cursor`. When more visible notes exist, `X-Next-Cursor` and `Link: ...;
+rel="next"` identify the next page. Follow the link or reuse the cursor with the
+same account and normalized `q`. Cursor and nonzero offset cannot be combined.
+Permissions are checked again on every page. Prefer cursor pagination for deep
+continuation; offset remains for existing clients.
+
+```sh
+# DATABASE_URL must select a disposable/representative test dataset.
+python -m scripts.query_plans --user-id 1 --term rarebenchmarkneedle \
+  --offset 4000 --analyze --output work/query-plans.json
+```
+
+The diagnostic uses real `EXPLAIN (ANALYZE, BUFFERS)` results and records which
+indexes PostgreSQL actually chose. It does not disable sequential scans or claim
+that every query should use an index.
+
+### Operational controls
+
+Login consumes shared PostgreSQL account/address budgets before expensive Argon2
+verification. Defaults are 10 attempts per account and 50 per client address per
+60 seconds, for both successful and failed attempts. Configure
+`LOGIN_RATE_LIMIT_ATTEMPTS`, `LOGIN_IP_RATE_LIMIT_ATTEMPTS`, and
+`LOGIN_RATE_LIMIT_WINDOW_SECONDS`. Excess attempts return generic `429` responses
+with `Retry-After`. Stored bucket keys are hashed. Trusted proxy configuration is
+required to preserve real client addresses; spoofed forwarded headers are not
+accepted on a directly exposed API.
+
+Registration and login share a per-process password-hashing admission limit:
+`PASSWORD_HASH_CONCURRENCY=2` by default (allowed range 1–8). The existing Argon2id
+parameters remain unchanged. When both slots are occupied, requests receive a
+safe `503` with `Retry-After: 1` instead of queuing more memory-intensive hashes.
+The recommended hash uses about 64 MiB per operation, plus process overhead;
+budget `workers × PASSWORD_HASH_CONCURRENCY × 64 MiB` within each container's
+memory limit. The cloud example uses one worker, two slots, and a 512 MiB limit.
+Increase these settings only after measuring CPU and peak memory together.
+
+`/metrics` exposes per-process Prometheus request counts, duration histograms,
+connection-pool gauges, and process metrics. Labels use route templates, never
+raw note IDs, user identities, query text, or tokens. Set `METRICS_TOKEN` for bearer
+authentication; cloud manifests require it and the local gateway keeps the metrics
+path private. Scrape each replica separately. The laptop default permits a direct
+local scrape when the token is unset. Keep one worker per replica for these
+per-process metrics; using multiple workers in one container requires a
+Prometheus multiprocess collection setup before the scrape represents every worker.
+
+Expired sessions and inactive throttle windows are removed in bounded transactions
+using `SKIP LOCKED`, so concurrent cleanup jobs do not wait on the same batch:
+
+```sh
+docker compose run --rm api python -m scripts.cleanup_sessions --batch-size 1000
+```
+
+A Kubernetes CronJob schedules this command. Expired-token checks remain enforced
+on every request even before cleanup runs.
+
+### Load testing and backup recovery
+
+The load tool creates its own uniquely named, disposable Compose project, chooses
+unused local ports, seeds synthetic accounts/teams/private and shared notes, and
+runs paced HTTP traffic through two API replicas. It never selects the developer
+database. The mix includes listing/search, direct reads, versioned writes, and
+login. It reports p50/p95/p99 latency, actual throughput, planned/offered arrivals,
+scheduling lag and dropped arrivals, errors, version conflicts, throttling, sampled database connections, and
+lock waits. Sampling may miss brief peaks. Choose acceptance budgets before making
+a production capacity claim.
+
+```sh
+python3 -m scripts.load_test --duration 15 --rate 50 --concurrency 16 \
+  --users 8 --notes 10000 --output work/load-test-report.json
+```
+
+Use `--keep-stack` only when inspecting the disposable dataset afterward; the
+command prints its unique project name for explicit cleanup. Local observations
+are evidence for the development, not a cloud requests-per-second guarantee.
+
+A measured laptop run used 10,000 notes, eight users, two API replicas, a 15-second
+window and a target of 50 requests/second: 750/750 requests returned `200`, with
+50.04 completed requests/second, p50 4.99 ms, p95 62.43 ms and p99 167.50 ms.
+No arrivals were dropped; sampled database connections peaked at eight and no lock
+waits were observed. These are one local run, with client scheduling and Docker
+sampling overhead recorded, rather than an upper capacity bound.
+
+On a matching 10,000-note dataset, actual PostgreSQL plans selected the ordered note index.
+At offset 4,000, deep-offset execution measured 1.028 ms versus 0.049 ms for a
+keyset query at the same boundary. Selective substring search selected both GIN
+trigram indexes and measured 0.283 ms. Query timing excludes client/network time
+and varies with cache state and data distribution; it is separate from HTTP latency.
+
+`scripts.backup_restore` uses PostgreSQL custom-format `.dump` archives, with
+credentials read from environment variables. It refuses to overwrite an existing
+backup or restore into a nonempty/same database. Restore is one transaction and
+stops on errors. Use PostgreSQL 18 client tools on a cloud operations host, or the
+local database container's tools with `--db-container`:
+
+Put host, port, database, and credentials in the URL's main fields. Routing
+overrides in query parameters are rejected, and the host process's inherited
+`PG*` connection settings are ignored. Container mode accepts only a loopback URL and verifies
+that this endpoint and the pinned container reach the same database before
+running PostgreSQL tools. Native tools support the configured cloud URL and TLS
+options without a Docker connection.
+
+```sh
+# Set DATABASE_URL and RESTORE_DATABASE_URL to separate source/empty target DBs.
+python -m scripts.backup_restore dump --archive work/notes.dump --db-container DB_CONTAINER
+python -m scripts.backup_restore restore --archive work/notes.dump --db-container DB_CONTAINER
+python -m scripts.backup_restore compare
+```
+
+The comparison is intended for a quiesced development/test dataset; it checks table
+row counts and canonical row fingerprints without printing row contents. Actual
+production recovery should additionally define recovery point/time objectives,
+backup retention/encryption, and managed failover procedures.
 
 ## Verify
 
@@ -571,11 +761,14 @@ app/
   __init__.py
   api_contract.py   # Shared OpenAPI response models, headers, and conventions
   auth.py           # Authentication routes and request/response models
+  config.py         # Validated pool, timeout, and deployment settings
   database.py       # Pooled ORM sessions and Alembic migration runner
-  main.py           # Application and health endpoint
+  main.py           # Application, liveness, readiness, and metrics endpoints
   migrations/       # Versioned Alembic Python revisions
   models.py         # Typed SQLAlchemy database models
   notes.py          # Note CRUD, version checks, visibility, and search
+  observability.py  # Bounded per-process Prometheus metrics
+  rate_limit.py     # Shared PostgreSQL login-attempt budgets
   sharing.py        # Revocable read-only recipient-team grants
   security.py       # Password hashing and token helpers
   teams.py          # Team and owner-managed membership routes
@@ -590,11 +783,26 @@ tests/
   test_search.py    # Literal search, access filtering, and pagination
   test_sharing.py   # Read-only grants and revocation
   test_acceptance.py # Full API collaboration and persistence scenarios
+  test_database_config.py # Pools, timeouts, cloud role, rollout, and cleanup
+  test_cursor_pagination.py # Stable pagination and permission changes
+  test_operations.py # Readiness, metrics privacy, and resource failures
+  test_rate_limit.py # Shared account/address throttling
+  test_hash_capacity.py # Shared password-hashing memory admission
+  test_backup_tools.py # Safe backup/restore boundaries and credentials
+  test_load_tools.py # Load-tool input and scheduling behavior
 scripts/
   demo.py           # Complete HTTP demonstration using the standard library
+  migrate.py        # Separate cloud migration command
+  cleanup_sessions.py # Bounded session and throttle-window maintenance
+  load_test.py      # Disposable two-replica HTTP benchmark
+  benchmark_data.py # Synthetic fixtures and connection/lock samples
+  query_plans.py    # Actual PostgreSQL query-plan diagnostics
+  backup_restore.py # Private archives, guarded restore, and comparison
+deploy/             # Kubernetes manifests, NGINX, and deployment guide
 AGENTS.md           # Development instructions
 Dockerfile          # Runtime and test container stages
 compose.yaml        # API, PostgreSQL, and isolated test services
+compose.scale.yaml  # Two replicas, gateway, and separate migrations
 requirements.txt    # Runtime dependencies
 requirements-dev.txt # Test dependencies
 pyproject.toml      # Shared Pyright and Ruff configuration
@@ -648,25 +856,23 @@ These decisions describe implemented behavior; planned extensions are below.
    writer's changes. Clients must reload and reconcile conflicts; this provides
    safe shared saves without simultaneous character-level editing. Read-only grants
    extend the read predicate without changing write permissions. Literal substring
-   search shares that read predicate; simple bounded offset pages keep the API
-   straightforward, while full-text indexes and cursor pagination remain future
-   optimizations for measured workloads.
+   search shares that read predicate. Bounded offset pages preserve the original
+   API, while caller/query-bound cursor pages support deep continuation. Ordered
+   and trigram indexes have measured query plans, with added storage and write
+   maintenance as their tradeoff.
 
 ## What I would change, add, or stop with more time
 
 With more time, I would prioritize:
 
-- **Change:** Tune connection-pool sizing and add full-text/trigram search indexes
-  when measured traffic and query plans justify them. Use cursor pagination when
-  stable traversal during concurrent inserts becomes more important than simple
-  offset pages.
-- **Add:** Login throttling, email verification, and password reset flows before
-  opening account registration beyond the development environment.
-- **Add:** Note revision history and recovery, followed by an audit trail for
-  sharing and membership changes. These would make edits recoverable and help
-  teams understand changes to access.
-- **Add:** Backup and restore checks and operational visibility such as structured
-  logs and database readiness checks before a production rollout.
-- **Stop:** Applying migrations during every application startup once deployment
-  coordination becomes more involved. Move them into a controlled release step
-  while retaining the same version ledger and failure checks.
+- **Change:** Tune the implemented pool, timeout, throttle and index settings from
+  sustained mixed-workload measurements on the selected cloud/database tier.
+- **Add:** Email verification, password reset, and a stronger account-recovery flow
+  before opening registration beyond the development/development environment.
+- **Add:** Note revision history and an audit trail for content, sharing, and
+  membership changes, beyond the current optimistic version counter.
+- **Add:** Long-duration soak, failover, and disaster-recovery exercises with stated
+  recovery point/time objectives, managed backup retention/encryption and alerts.
+- **Keep:** Separate cloud migration jobs, explicit reviewed schema compatibility,
+  readiness-based routing, and per-replica metrics. The laptop remains one-command
+  runnable; the optional two-replica profile demonstrates the deployment pattern.

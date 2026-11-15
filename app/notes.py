@@ -1,11 +1,24 @@
 """Personal and team notes with current access checks and versioned writes."""
 
+import base64
+import binascii
+import hashlib
+import json
 from datetime import datetime
 from typing import Annotated
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
-from sqlalchemy import and_, func, or_, select
+from fastapi.exceptions import RequestValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+)
+from sqlalchemy import and_, func, or_, select, tuple_
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -19,6 +32,72 @@ MAX_BIGINT = 2**63 - 1
 SearchText = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
 ]
+
+
+class NoteCursor(BaseModel):
+    """A position, not an authorization token; permissions are checked on every page."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    created_at: AwareDatetime
+    note_id: Annotated[int, Field(gt=0, le=MAX_BIGINT)]
+    query_hash: Annotated[str, StringConstraints(pattern="^[0-9a-f]{64}$")]
+
+
+def cursor_query_hash(user_id: int, q: str | None) -> str:
+    # Bind a continuation to its normalized search and caller, while allowing
+    # page-size changes and evaluating current membership on every request.
+    query = json.dumps([user_id, q], separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(query.encode("utf-8")).hexdigest()
+
+
+def invalid_cursor(message: str = "Invalid note cursor") -> RequestValidationError:
+    return RequestValidationError(
+        [{"type": "value_error", "loc": ("query", "cursor"), "msg": message}]
+    )
+
+
+def decode_note_cursor(value: str, user_id: int, q: str | None) -> NoteCursor:
+    try:
+        decoded = base64.b64decode(
+            value + "=" * (-len(value) % 4), altchars=b"-_", validate=True
+        )
+        position = NoteCursor.model_validate_json(decoded)
+    except (ValueError, binascii.Error, ValidationError):
+        raise invalid_cursor() from None
+    if position.query_hash != cursor_query_hash(user_id, q):
+        raise invalid_cursor("Use the same account and search query with this cursor")
+    return position
+
+
+def encode_note_cursor(note: "NoteResponse", user_id: int, q: str | None) -> str:
+    position = NoteCursor(
+        created_at=note.created_at,
+        note_id=note.id,
+        query_hash=cursor_query_hash(user_id, q),
+    )
+    return (
+        base64.urlsafe_b64encode(position.model_dump_json().encode("utf-8"))
+        .decode("ascii")
+        .rstrip("=")
+    )
+
+
+NOTE_LIST_RESPONSES = api_responses(
+    errors={401: "A valid bearer session is required."}, validation=True
+)
+NOTE_LIST_RESPONSES[200]["headers"].update(
+    {
+        "X-Next-Cursor": {
+            "description": "Opaque continuation position for the next visible page; absent when there is no next page. Reuse the same account and q value.",
+            "schema": {"type": "string"},
+        },
+        "Link": {
+            "description": "A URI reference with rel=next, preserving limit and the normalized search query. Absent on the final page.",
+            "schema": {"type": "string"},
+        },
+    }
+)
 
 
 def writable_to(user_id: int) -> ColumnElement[bool]:
@@ -200,13 +279,15 @@ def create_note(
         "members, and notes shared read-only with a team the caller currently belongs "
         "to. Apply literal case-insensitive title/content search and access filters before "
         "pagination. Order by created_at descending, then ID "
-        "descending. Empty or exhausted pages return an empty array."
+        "descending. Follow Link or X-Next-Cursor for efficient continuation without "
+        "deep offsets. Cursor pagination rechecks current access and omits newly "
+        "inserted notes ahead of the current position. Empty or exhausted pages return "
+        "an empty array. Cursors cannot be combined with a nonzero offset."
     ),
-    responses=api_responses(
-        errors={401: "A valid bearer session is required."}, validation=True
-    ),
+    responses=NOTE_LIST_RESPONSES,
 )
 def list_notes(
+    response: Response,
     user: Annotated[UserResponse, Depends(get_current_user)],
     limit: Annotated[
         int,
@@ -230,8 +311,25 @@ def list_notes(
             ),
         ),
     ] = None,
+    cursor: Annotated[
+        str | None,
+        Query(
+            min_length=1,
+            max_length=1024,
+            pattern="^[A-Za-z0-9_-]+$",
+            description="Opaque continuation from X-Next-Cursor or Link. Reuse the same account and q; do not combine with a nonzero offset.",
+        ),
+    ] = None,
 ) -> list[NoteResponse]:
     statement = select(Note).where(visible_to(user.id))
+    if cursor is not None:
+        if offset != 0:
+            raise invalid_cursor("Do not combine cursor with a nonzero offset")
+        position = decode_note_cursor(cursor, user.id, q)
+        statement = statement.where(
+            tuple_(Note.created_at, Note.id)
+            < tuple_(position.created_at, position.note_id)
+        )
     if q is not None:
         statement = statement.where(
             or_(
@@ -240,12 +338,22 @@ def list_notes(
             )
         )
     with get_session() as session:
-        notes = session.scalars(
-            statement.order_by(Note.created_at.desc(), Note.id.desc())
-            .limit(limit)
-            .offset(offset)
+        notes = list(
+            session.scalars(
+                statement.order_by(Note.created_at.desc(), Note.id.desc())
+                .limit(limit + 1)
+                .offset(offset)
+            )
         )
-        return [NoteResponse.model_validate(note) for note in notes]
+        page = [NoteResponse.model_validate(note) for note in notes[:limit]]
+        if len(notes) > limit:
+            next_cursor = encode_note_cursor(page[-1], user.id, q)
+            parameters: dict[str, str | int] = {"limit": limit, "cursor": next_cursor}
+            if q is not None:
+                parameters["q"] = q
+            response.headers["X-Next-Cursor"] = next_cursor
+            response.headers["Link"] = f'<?{urlencode(parameters)}>; rel="next"'
+        return page
 
 
 @router.get(

@@ -18,7 +18,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=5s --timeout=3s --start-period=5s --retries=10 \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).close()"]
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers \"${WEB_CONCURRENCY:-1}\" --limit-concurrency \"${API_CONCURRENCY_LIMIT:-100}\" --timeout-keep-alive \"${API_KEEP_ALIVE_SECONDS:-5}\" --timeout-graceful-shutdown \"${API_GRACEFUL_SHUTDOWN_SECONDS:-25}\""]
 
 FROM runtime AS test
 USER root

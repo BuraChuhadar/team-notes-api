@@ -64,6 +64,15 @@ class HealthResponse(BaseModel):
     status: Literal["ok"] = Field(description="The application process is responding.")
 
 
+class ReadinessResponse(BaseModel):
+    """The database is reachable and at the application's expected schema revision."""
+
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["ok"] = Field(
+        description="Database connectivity and schema checks passed."
+    )
+
+
 def _response_headers(
     status_code: int, *, private: bool, location: bool = False
 ) -> dict[str, dict[str, Any]]:
@@ -79,6 +88,12 @@ def _response_headers(
             "description": "The authentication scheme required for this request.",
             "schema": {"type": "string", "const": "Bearer"},
             "example": "Bearer",
+        }
+    if status_code in {HTTPStatus.TOO_MANY_REQUESTS, HTTPStatus.SERVICE_UNAVAILABLE}:
+        headers["Retry-After"] = {
+            "description": "Seconds to wait before retrying an operation whose outcome is known.",
+            "schema": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+            "example": "1",
         }
     if location:
         headers["Location"] = {
@@ -122,6 +137,7 @@ def api_responses(
         }
     }
     error_descriptions = {
+        HTTPStatus.SERVICE_UNAVAILABLE: "A database resource is temporarily unavailable; retry only when safe.",
         HTTPStatus.INTERNAL_SERVER_ERROR: (
             "An unexpected server error occurred. Internal details are not exposed."
         ),
@@ -136,6 +152,9 @@ def api_responses(
         exact_examples = {
             HTTPStatus.UNAUTHORIZED: {"detail": "Invalid authentication credentials"},
             HTTPStatus.INTERNAL_SERVER_ERROR: {"detail": "Internal server error"},
+            HTTPStatus.SERVICE_UNAVAILABLE: {
+                "detail": "Service temporarily unavailable"
+            },
         }
         if error_code in exact_examples:
             responses[error_code]["content"] = {
@@ -184,7 +203,7 @@ OPENAPI_TAGS: list[dict[str, str]] = [
     },
     {
         "name": "health",
-        "description": "Check process liveness without querying the database.",
+        "description": "Check process liveness and database/schema readiness.",
     },
 ]
 
@@ -201,7 +220,7 @@ date-time strings with a timezone.
 
 ## Authentication and privacy
 
-Registration, login, and health checks are public. Other operations require
+Registration, login, liveness and readiness checks are public. Other operations require
 `Authorization: Bearer <access_token>`. Obtain the opaque token from `/auth/login`;
 it is not a JWT. Sessions expire after one hour, and logout revokes the current
 token immediately. Private responses, including their errors, carry
@@ -225,4 +244,8 @@ issues. Each issue contains only `type`, `loc`, and `msg`; raw submitted values
 and validator context are omitted. Unexpected server failures return a generic
 `500` JSON error without internal implementation details. Endpoint response
 definitions describe the applicable status codes, bodies, and headers.
+Login is throttled with shared database counters; excess attempts return `429`
+with `Retry-After`. Temporary database resource exhaustion returns `503` with
+`Retry-After`. `/health` reports process liveness, while `/ready` checks the
+configured database and its migration revision.
 """

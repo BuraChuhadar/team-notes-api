@@ -17,6 +17,7 @@ from test_database import PostgreSQLTestCase
 HTTP_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
 PUBLIC_OPERATIONS = {
     ("/health", "get"),
+    ("/ready", "get"),
     ("/auth/register", "post"),
     ("/auth/login", "post"),
 }
@@ -262,7 +263,10 @@ class OpenAPIContractTests(unittest.TestCase):
 
     def test_unexpected_failures_return_safe_documented_json(self) -> None:
         secret = "database-password-must-not-leak"
-        with patch("app.auth.get_session", side_effect=RuntimeError(secret)):
+        with (
+            patch("app.auth.try_consume_login_attempt"),
+            patch("app.auth.get_session", side_effect=RuntimeError(secret)),
+        ):
             response = self.client.post(
                 "/auth/login",
                 json={"email": "reader@example.com", "password": "example-passphrase"},
