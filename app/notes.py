@@ -15,6 +15,9 @@ from app.models import Membership, Note, NoteShare
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 MAX_BIGINT = 2**63 - 1
+SearchText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+]
 
 
 def writable_to(user_id: int) -> ColumnElement[bool]:
@@ -105,12 +108,28 @@ def list_notes(
     user: Annotated[UserResponse, Depends(get_current_user)],
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=MAX_BIGINT)] = 0,
+    q: Annotated[
+        SearchText | None,
+        Query(
+            description=(
+                "Optional case-insensitive literal substring of the title or content. "
+                "Leading/trailing whitespace is removed; the remaining query must "
+                "contain 1–200 characters. SQL wildcard characters are treated literally."
+            ),
+        ),
+    ] = None,
 ) -> list[NoteResponse]:
+    statement = select(Note).where(visible_to(user.id))
+    if q is not None:
+        statement = statement.where(
+            or_(
+                Note.title.icontains(q, autoescape=True),
+                Note.content.icontains(q, autoescape=True),
+            )
+        )
     with get_session() as session:
         notes = session.scalars(
-            select(Note)
-            .where(visible_to(user.id))
-            .order_by(Note.created_at.desc(), Note.id.desc())
+            statement.order_by(Note.created_at.desc(), Note.id.desc())
             .limit(limit)
             .offset(offset)
         )

@@ -40,7 +40,8 @@
   return `409`. Keep authorization checks and membership locks inside the write
   transaction. Owners alone can mutate private notes; current team members can
   mutate team notes. Preserve ownership and team assignment during saves.
-- Search and explicit sharing across teams are future increments.
+- Note lists support optional trimmed literal search with `q` (1–200 characters).
+  Apply current read permissions and search before stable, bounded pagination.
 - Passwords use Argon2id; opaque bearer tokens are stored only as SHA-256 hashes.
   Sessions expire after one hour and logout revokes the current token.
 

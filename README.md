@@ -135,7 +135,32 @@ notes for teams they currently belong to. `limit` defaults to 50 and accepts
 inaccessible note returns the same `404` response. Note responses use
 `Cache-Control: no-store`.
 
-Search and explicit sharing across teams are later increments.
+Note lists support permission-aware search and read-only recipient grants.
+
+### Search and paginate notes
+
+Use the optional `q` parameter to search note titles and content:
+
+```sh
+curl -i --get http://127.0.0.1:8000/notes \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode 'q=meeting' \
+  --data-urlencode 'limit=20' \
+  --data-urlencode 'offset=0'
+```
+
+Search matches a case-insensitive literal substring. Leading and trailing query
+whitespace is removed; the remaining query must contain 1–200 characters. Empty,
+whitespace-only, or oversized queries return `422`. SQL wildcard characters such
+as `%` and `_` are literal text. Omitting `q` lists all visible notes.
+
+Current ownership, source-team membership, and recipient-team grants are checked
+before search and pagination. Revoking a grant or removing membership removes
+search access too. Multiple matching grants return each note once. Results use
+the existing JSON array format, ordered by creation time descending and then ID
+descending. `limit` defaults to 50 and accepts 1–100; `offset` defaults to zero
+and accepts nonnegative PostgreSQL BIGINT values. No matches or an exhausted page
+returns `200` with `[]`. Search does not change notes or their versions.
 
 ### Update and delete notes
 
@@ -476,7 +501,7 @@ These decisions describe implemented behavior; planned extensions are below.
 
 ## What I would change, add, or stop with more time
 
-The planned core still includes explicit team sharing and search.
+The planned core is implemented; the extensions below are future work.
 Beyond that core, I would prioritize:
 
 - **Change:** Tune connection-pool sizing and indexes when measured traffic and
