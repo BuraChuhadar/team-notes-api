@@ -26,11 +26,12 @@ from app.api_contract import api_responses
 from app.auth import UserResponse, get_current_user
 from app.database import get_session
 from app.models import Membership, Note, NoteShare
+from app.validation import PostgresText
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 MAX_BIGINT = 2**63 - 1
 SearchText = Annotated[
-    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+    PostgresText, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
 ]
 
 
@@ -136,11 +137,11 @@ class NoteCreate(BaseModel):
     )
 
     title: Annotated[
-        str,
+        PostgresText,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
         Field(description="Note title; leading and trailing whitespace is removed."),
     ]
-    content: str = Field(
+    content: PostgresText = Field(
         default="",
         max_length=100_000,
         description="Note content; whitespace and Unicode are preserved.",
@@ -174,13 +175,13 @@ class NoteUpdate(BaseModel):
     )
 
     title: Annotated[
-        str,
+        PostgresText,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
         Field(
             description="Replacement title; leading and trailing whitespace is removed."
         ),
     ]
-    content: str = Field(
+    content: PostgresText = Field(
         max_length=100_000,
         description="Replacement content, including an empty string.",
     )

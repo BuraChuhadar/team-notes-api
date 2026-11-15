@@ -57,14 +57,14 @@ class OperationalEndpointTests(unittest.TestCase):
         self.assertEqual(response.headers["Cache-Control"], "no-store")
 
     def test_metrics_bearer_token_is_required_when_configured(self) -> None:
-        with patch.dict(os.environ, {"METRICS_TOKEN": "development-test-metrics-token"}):
+        with patch.dict(os.environ, {"METRICS_TOKEN": "local-test-metrics-token"}):
             denied = self.client.get("/metrics")
             wrong = self.client.get(
                 "/metrics", headers={"Authorization": "Bearer wrong"}
             )
             allowed = self.client.get(
                 "/metrics",
-                headers={"Authorization": "Bearer development-test-metrics-token"},
+                headers={"Authorization": "Bearer local-test-metrics-token"},
             )
         self.assertEqual(denied.status_code, 401)
         self.assertEqual(wrong.status_code, 401)
@@ -117,7 +117,7 @@ class OperationalEndpointTests(unittest.TestCase):
         self.assertNotIn("private-test-password", response.text)
 
     def test_malformed_non_ascii_metrics_credentials_are_unauthorized(self) -> None:
-        with patch.dict(os.environ, {"METRICS_TOKEN": "development-test-metrics-token"}):
+        with patch.dict(os.environ, {"METRICS_TOKEN": "local-test-metrics-token"}):
             response = self.client.get(
                 "/metrics", headers=[(b"authorization", b"Bearer\xff")]
             )

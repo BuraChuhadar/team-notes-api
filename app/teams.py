@@ -13,6 +13,7 @@ from app.api_contract import api_responses
 from app.auth import UserResponse, get_current_user
 from app.database import get_session
 from app.models import Membership, Team, User
+from app.validation import PostgresText
 
 router = APIRouter(prefix="/teams", tags=["teams"])
 CurrentUser = Annotated[UserResponse, Depends(get_current_user)]
@@ -36,7 +37,7 @@ class CreateTeamRequest(BaseModel):
     )
 
     name: Annotated[
-        str,
+        PostgresText,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
         Field(
             description="Team name, trimmed before validation. Duplicate names are allowed."

@@ -11,7 +11,6 @@ from pydantic import (
     ConfigDict,
     EmailStr,
     Field,
-    SecretStr,
     StringConstraints,
     field_validator,
 )
@@ -29,6 +28,7 @@ from app.security import (
     hash_token,
     verify_password,
 )
+from app.validation import PasswordText, PostgresText
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _bearer = HTTPBearer(
@@ -72,11 +72,11 @@ class RegisterRequest(EmailRequest):
     )
 
     display_name: Annotated[
-        str,
+        PostgresText,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
         Field(description="Public name; leading and trailing whitespace is removed."),
     ]
-    password: SecretStr = Field(
+    password: PasswordText = Field(
         min_length=12,
         max_length=128,
         description="Password to hash; whitespace is preserved. Never returned in responses.",
@@ -96,7 +96,7 @@ class LoginRequest(EmailRequest):
         },
     )
 
-    password: SecretStr = Field(
+    password: PasswordText = Field(
         min_length=1,
         max_length=128,
         description="Account password; whitespace is preserved.",
