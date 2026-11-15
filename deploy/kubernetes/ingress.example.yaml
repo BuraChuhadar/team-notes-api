@@ -4,7 +4,7 @@ kind: Ingress
 metadata:
   name: notes-api
   annotations:
-    nginx.ingress.kubernetes.io/proxy-body-size: 1m
+    nginx.ingress.kubernetes.io/proxy-body-size: 2m
 spec:
   ingressClassName: nginx
   tls:
