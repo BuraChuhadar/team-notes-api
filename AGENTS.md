@@ -7,6 +7,15 @@
 - Keep the implementation simple and update README.md when setup or behavior changes.
 - Keep local database files, virtual environments, caches, and secrets out of Git.
 
+## Commit conventions
+
+- Use Conventional Commits: `type(scope): short description`; the scope is optional.
+- Use `feat`, `fix`, `docs`, `test`, `refactor`, or `chore` as appropriate.
+- Write the subject in the imperative, such as `feat(db): add note ownership`.
+- Keep subjects around 72 characters or fewer.
+- Keep each commit focused and runnable, including related tests and README updates.
+- Never commit local database files, virtual environments, caches, or secrets.
+
 ## Project
 
 - Python 3.11+, FastAPI, SQLAlchemy 2.1, Alembic, PostgreSQL, and Psycopg 3.
@@ -46,3 +55,13 @@ Run checks relevant to the change. Persistence changes should verify commit,
 rollback, and connection cleanup. Startup changes should verify initialization
 and the health endpoint. Keep the shared Python 3.11 target and deprecated-API
 errors; fix warnings rather than suppressing them. Report checks and remaining limits.
+
+## Project requirements
+
+- Include all application source code and tests, plus reproducible setup and test
+  commands in README.md.
+- Document two or three design decisions that required the most thought, why they
+  were chosen, and their tradeoffs.
+- Explain what would be changed, added, or stopped with more time.
+- Keep these sections aligned with implemented behavior as development proceeds;
+  clearly distinguish planned work from completed features.
