@@ -420,17 +420,30 @@ the Compose hostname `db`.
 
 Application startup applies Alembic Python revisions in a transaction. A
 PostgreSQL advisory lock serializes migration runs, and `alembic_version` records
-the current revision. Initialization is repeatable and rejects unknown revisions.
-Databases with a compatible `schema_migrations` ledger are adopted by validating
-their contiguous history, stamping the matching Alembic revision, and applying
-later revisions. Existing users, notes, and sessions are preserved. Schema
+the current revision. Revisions `001_initial` through `006_login_throttle` form
+one ordered chain; these are incremental changes, not competing initial schemas.
+Applied revisions stay immutable, and later schema changes add a new revision.
+
+Alembic is the active migration authority. Databases with an older
+`schema_migrations` ledger are adopted only after their contiguous history and
+claimed physical schema have been validated. Adoption stamps the corresponding
+Alembic revision, including when an empty `alembic_version` table already exists,
+then applies later revisions. The old ledger remains archival history.
+When both ledgers contain revisions, their histories must agree. Unknown or
+abbreviated revisions, multiple current heads, contradictory histories, and
+untracked application tables stop initialization before migration DDL runs.
+Legacy checks recognize the original v1/v2 PostgreSQL schema signatures, including
+their constraints, indexes, defaults, and generated identifiers. An altered or
+unrecognized signature requires schema review before adoption; the runner leaves
+the existing ledger and application data intact.
+Existing users, notes, and sessions are preserved. Schema
 changes use versioned Python Alembic revisions; separate `.sql` files are not
 required. Compatibility tests construct earlier schemas from those revisions.
 
 To apply migrations without starting the server:
 
 ```sh
-docker compose run --rm api python -c 'from app.database import init_database; init_database()'
+docker compose run --rm api python -m scripts.migrate
 ```
 
 The schema contains:
@@ -764,6 +777,7 @@ app/
   config.py         # Validated pool, timeout, and deployment settings
   database.py       # Pooled ORM sessions and Alembic migration runner
   main.py           # Application, liveness, readiness, and metrics endpoints
+  migration_compat.py # Frozen historical-schema checks for one-time adoption
   migrations/       # Versioned Alembic Python revisions
   models.py         # Typed SQLAlchemy database models
   notes.py          # Note CRUD, version checks, visibility, and search
@@ -778,6 +792,7 @@ tests/
   test_teams.py     # Team authorization and membership integration tests
   test_database.py  # Connection and persistence behavior tests
   test_migrations.py # Migration behavior tests
+  test_migration_history.py # Strict revision history and collision rejection
   test_notes.py     # Note creation/read access tests
   test_note_mutations.py # Versions, writes, deletion, and transaction races
   test_search.py    # Literal search, access filtering, and pagination

@@ -89,6 +89,10 @@ in `pyproject.toml`; fix warnings instead of suppressing them.
   transactional migration runner, advisory lock, revision checks, and adoption
   of validated legacy `schema_migrations` history.
 - Do not modify applied migration files; add a new migration for later changes.
+- Treat Alembic as the active ledger. Validate exact revision IDs and a single
+  migration head before DDL. Legacy adoption must validate the claimed historical
+  schema, handle an empty Alembic ledger, and reject contradictory histories.
+  Preserve the archival legacy ledger and genuine historical constraint names.
 - Keep schema migrations in Python Alembic revisions. Compatibility tests should
   reconstruct earlier schemas using those revisions, without separate `.sql` files.
 - Preserve any earlier local SQLite database files; importing their data is a

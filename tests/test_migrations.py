@@ -13,11 +13,15 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
     Column,
     DateTime,
+    Identity,
     Integer,
     MetaData,
     String,
@@ -26,6 +30,7 @@ from sqlalchemy import (
     delete,
     func,
     inspect,
+    literal,
     select,
     table,
     update,
@@ -63,6 +68,7 @@ class MigrationTests(PostgreSQLTestCase):
                 nullable=False,
                 server_default=func.current_timestamp(),
             ),
+            CheckConstraint(column("version") > 0),
         )
         with database.get_engine().begin() as connection:
             command.upgrade(database.migration_config(connection), revision)
@@ -222,6 +228,239 @@ class MigrationTests(PostgreSQLTestCase):
         with self.assertRaises(RuntimeError):
             database.init_database()
         self.assertIsNone(self.current_revision())
+
+    def assert_legacy_schema_is_rejected_without_changes(self) -> None:
+        def schema_shape() -> dict[str, list[tuple[str, str, bool, str | None]]]:
+            with database.get_engine().connect() as connection:
+                inspector = inspect(connection)
+                return {
+                    name: [
+                        (
+                            column["name"],
+                            str(column["type"]),
+                            column["nullable"],
+                            column.get("default"),
+                        )
+                        for column in inspector.get_columns(name)
+                    ]
+                    for name in inspector.get_table_names()
+                }
+
+        before = schema_shape()
+        with self.assertRaisesRegex(
+            RuntimeError, "Legacy schema does not match declared version"
+        ):
+            database.init_database()
+        self.assertIsNone(self.current_revision())
+        self.assertEqual(schema_shape(), before)
+
+    def test_legacy_schema_with_missing_sessions_is_not_stamped(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).drop_table("sessions")
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_with_missing_required_index_is_not_stamped(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).drop_index(
+                "notes_owner_id_idx", table_name="notes"
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_requires_unique_case_insensitive_email_index(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            operations = Operations(MigrationContext.configure(connection))
+            operations.drop_index("users_email_key", table_name="users")
+            operations.create_index(
+                "users_email_key", "users", [func.lower(column("email"))]
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_with_missing_check_is_not_stamped(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).drop_constraint(
+                "notes_title_check", "notes", type_="check"
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_check_name_does_not_authorize_a_changed_predicate(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            operations = Operations(MigrationContext.configure(connection))
+            operations.drop_constraint("notes_title_check", "notes", type_="check")
+            operations.create_check_constraint(
+                "notes_title_check", "notes", literal(True)
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_with_missing_foreign_key_is_not_stamped(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).drop_constraint(
+                "notes_owner_id_fkey", "notes", type_="foreignkey"
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_with_missing_primary_key_is_not_stamped(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).drop_constraint(
+                "sessions_pkey", "sessions", type_="primary"
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_with_changed_column_type_is_not_stamped(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).alter_column(
+                "notes", "title", type_=String(100)
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_with_changed_nullability_is_not_stamped(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).alter_column(
+                "notes", "content", nullable=True
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_requires_content_default(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).alter_column(
+                "notes", "content", server_default=None
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_requires_timestamp_defaults(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).alter_column(
+                "users", "created_at", server_default=None
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_requires_always_generated_identifiers(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).alter_column(
+                "users",
+                "id",
+                server_default=Identity(always=False),
+                existing_server_default=Identity(always=True),
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_with_later_note_version_is_not_blindly_adopted(self) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Operations(MigrationContext.configure(connection)).add_column(
+                "notes",
+                Column(
+                    "version", BigInteger, nullable=False, server_default=literal(1)
+                ),
+            )
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_legacy_schema_with_later_application_table_is_not_blindly_adopted(
+        self,
+    ) -> None:
+        self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            Table(
+                "note_shares", MetaData(), Column("id", Integer, primary_key=True)
+            ).create(connection)
+        self.assert_legacy_schema_is_rejected_without_changes()
+
+    def test_empty_alembic_ledger_adopts_valid_legacy_schema_and_preserves_data(
+        self,
+    ) -> None:
+        ledger = self.install_legacy_schema(2)
+        user_id, _ = self.seed_user_and_team()
+        token = "legacy-session-with-empty-alembic-ledger"
+        with database.get_engine().begin() as connection:
+            previous_notes = Table("notes", MetaData(), autoload_with=connection)
+            connection.execute(
+                previous_notes.insert().values(
+                    owner_id=user_id, title="Preserve before adoption"
+                )
+            )
+            Table(
+                "alembic_version",
+                MetaData(),
+                Column("version_num", String(32), primary_key=True),
+            ).create(connection)
+        with database.get_session() as session:
+            session.add(
+                AuthSession(
+                    user_id=user_id,
+                    token_hash=sha256(token.encode()).hexdigest(),
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                )
+            )
+        database.init_database()
+        database.init_database()
+        self.assertEqual(self.current_revision(), LATEST_REVISION)
+        with database.get_session() as session:
+            self.assertEqual(
+                session.scalars(select(Note.title)).one(), "Preserve before adoption"
+            )
+            self.assertEqual(
+                list(
+                    session.scalars(select(ledger.c.version).order_by(ledger.c.version))
+                ),
+                [1, 2],
+            )
+        with TestClient(app) as client:
+            response = client.get(
+                "/auth/me", headers={"Authorization": f"Bearer {token}"}
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["id"], user_id)
+
+    def test_contradictory_dual_ledgers_are_rejected_before_applying_ddl(self) -> None:
+        ledger = self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            command.stamp(database.migration_config(connection), "001_initial")
+        with self.assertRaisesRegex(RuntimeError, "histories contradict"):
+            database.init_database()
+        self.assertEqual(self.current_revision(), "001_initial")
+        with database.get_engine().connect() as connection:
+            self.assertNotIn(
+                "version",
+                {column["name"] for column in inspect(connection).get_columns("notes")},
+            )
+            self.assertEqual(
+                list(
+                    connection.scalars(
+                        select(ledger.c.version).order_by(ledger.c.version)
+                    )
+                ),
+                [1, 2],
+            )
+
+    def test_consistent_dual_ledgers_upgrade_with_archival_history_unchanged(
+        self,
+    ) -> None:
+        ledger = self.install_legacy_schema(2)
+        with database.get_engine().begin() as connection:
+            command.stamp(database.migration_config(connection), "002_sessions")
+        database.init_database()
+        database.init_database()
+        self.assertEqual(self.current_revision(), LATEST_REVISION)
+        with database.get_engine().connect() as connection:
+            self.assertEqual(
+                list(
+                    connection.scalars(
+                        select(ledger.c.version).order_by(ledger.c.version)
+                    )
+                ),
+                [1, 2],
+            )
 
     def test_failed_migration_preserves_prior_data_and_schema_version(self) -> None:
         database.init_database()
