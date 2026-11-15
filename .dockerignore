@@ -1,0 +1,14 @@
+# Send only source, tests, and dependencies to the build.
+*
+!Dockerfile
+!requirements.txt
+!requirements-dev.txt
+!pyproject.toml
+!app/
+!app/**
+!tests/
+!tests/**
+**/__pycache__/
+**/*.py[cod]
+**/.env
+**/.env.*

@@ -4,64 +4,74 @@
 
 - Develop in small, reviewable steps limited to the current request.
 - Leave changes unstaged and uncommitted unless the user explicitly asks otherwise.
-- Keep the implementation simple and update README.md when setup or behavior changes.
-- Keep local database files, virtual environments, caches, and secrets out of Git.
+- Keep the implementation simple. Add dependencies only when the feature needs them.
+- Update README.md when setup, configuration, or behavior changes.
 
 ## Commit conventions
 
 - Use Conventional Commits: `type(scope): short description`; the scope is optional.
 - Use `feat`, `fix`, `docs`, `test`, `refactor`, or `chore` as appropriate.
-- Write the subject in the imperative, such as `feat(db): add note ownership`.
-- Keep subjects around 72 characters or fewer.
-- Keep each commit focused and runnable, including related tests and README updates.
-- Never commit local database files, virtual environments, caches, or secrets.
+- Use an imperative subject around 72 characters or fewer.
+- Keep each commit focused and runnable, with related tests and documentation.
+- Never commit database files, virtual environments, caches, or secrets.
 
 ## Project
 
 - Python 3.11+, FastAPI, SQLAlchemy 2.1, Alembic, PostgreSQL, and Psycopg 3.
-- Application entry point: `app.main:app`.
-- Typed models: `app/models.py`; sessions and migrations: `app/database.py`.
-- `DATABASE_URL` is required. Do not add a fallback database or automatic `.env` loading.
-- The schema includes users, teams, memberships, and notes. Only `/health` is exposed.
-- Authentication, team permissions, and note endpoints are future increments.
+- Entry point: `app.main:app`. The health endpoint is implemented.
+- Sessions: `app/database.py`; typed models: `app/models.py`;
+  migrations: `app/migrations/versions/`.
+- `DATABASE_URL` is required. Use PostgreSQL; do not add automatic `.env` loading.
+- The schema includes users, teams, memberships, and notes. Authentication,
+  authorization, and note APIs are future increments.
+- Docker Compose supplies local PostgreSQL. Its named volume is outside Git.
+- The Dockerfile separates runtime and test dependencies and uses an unprivileged
+  API user.
 
 ## Commands
 
-After activating the virtual environment and configuring a local PostgreSQL URL:
+Run from the repository root:
 
 ```sh
-python -m pip install -r requirements-dev.txt
-python -m uvicorn app.main:app --reload
-python -m pip check
-python -m ruff check app tests
-python -m pyright
-python -W error::DeprecationWarning -W error::PendingDeprecationWarning -m unittest discover -s tests -v
+docker compose up --build -d --wait
+curl -i http://127.0.0.1:8000/health
+docker compose --profile test run --build --rm tests
 ```
 
-Set `TEST_DATABASE_URL` to a separate test database to run PostgreSQL tests.
-Tests use unique schemas and must not modify development or public-schema data.
+For host development, activate the virtual environment, install
+`requirements-dev.txt`, and provide `DATABASE_URL`. Stop the container API first
+if it occupies port 8000. README.md contains complete setup commands.
+
+The test container runs dependency validation, Ruff, Pyright, and integration
+tests. With the host virtual environment activated, run `python -m pip check`,
+`python -m ruff check app tests`, and `python -m pyright`. Keep the Python 3.11
+target and deprecated-API errors in `pyproject.toml`; fix warnings rather than
+suppressing them.
 
 ## Database changes
 
-- Use typed SQLAlchemy models and expressions with bound values; do not add handwritten SQL.
-- Use `get_session()` for transactions. Commit success, roll back failure, and close sessions.
 - Keep initialization repeatable and preserve existing data.
-- Add Alembic Python revisions for schema changes; do not edit applied revisions.
-- Preserve transactional migrations, advisory locking, and revision checks.
+- Use typed SQLAlchemy ORM models and SQLAlchemy expressions with bound values.
+- Use short session scopes through `get_session()`. Commit successful work,
+  roll back failures, and return connections to the pool when sessions close.
+- Add explicit Alembic Python revisions for schema changes. Do not edit applied
+  revisions; preserve transactional upgrades and advisory locking.
+- Reject unknown revisions instead of changing a newer database.
+- Use `TEST_DATABASE_URL` and unique test schemas. Never change development or
+  public-schema data in tests. The Compose test database has no published port.
 
 ## Verification
 
-Run checks relevant to the change. Persistence changes should verify commit,
-rollback, and connection cleanup. Startup changes should verify initialization
-and the health endpoint. Keep the shared Python 3.11 target and deprecated-API
-errors; fix warnings rather than suppressing them. Report checks and remaining limits.
+Run checks relevant to the change. Database changes should verify persistence,
+constraints, and rollback. Migration changes should cover repeat and concurrent
+initialization, incremental data preservation, and failed-upgrade atomicity.
+Startup changes should verify the lifespan and health endpoint. Report verified
+behavior and any remaining limits.
 
 ## Project requirements
 
-- Include all application source code and tests, plus reproducible setup and test
-  commands in README.md.
-- Document two or three design decisions that required the most thought, why they
-  were chosen, and their tradeoffs.
+- Include all application source, migrations, tests, and reproducible commands.
+- Document two or three design decisions, their reasons, and tradeoffs.
 - Explain what would be changed, added, or stopped with more time.
-- Keep these sections aligned with implemented behavior as development proceeds;
-  clearly distinguish planned work from completed features.
+- Keep those sections aligned with implemented behavior and distinguish planned
+  features from completed work.
