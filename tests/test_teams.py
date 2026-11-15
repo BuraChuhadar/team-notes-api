@@ -34,11 +34,13 @@ class TeamTests(PostgreSQLTestCase):
             session.add(user)
             session.flush()
             user_id = user.id
-            session.add(AuthSession(
-                token_hash=hash_token(token),
-                user_id=user_id,
-                expires_at=datetime.now(UTC) + timedelta(hours=1),
-            ))
+            session.add(
+                AuthSession(
+                    token_hash=hash_token(token),
+                    user_id=user_id,
+                    expires_at=datetime.now(UTC) + timedelta(hours=1),
+                )
+            )
         return user_id, {"Authorization": f"Bearer {token}"}
 
     def create_team(
@@ -84,7 +86,9 @@ class TeamTests(PostgreSQLTestCase):
         bob_teams = self.client.get("/teams", headers=self.bob_headers)
         self.assertEqual(bob_teams.status_code, 200, bob_teams.text)
         self.assertEqual(bob_teams.headers.get("Cache-Control"), "no-store")
-        self.assertEqual(bob_teams.json(), [{**engineering, "role": "member"}, research])
+        self.assertEqual(
+            bob_teams.json(), [{**engineering, "role": "member"}, research]
+        )
         self.assertEqual(
             self.client.get("/teams", headers=self.carol_headers).json(), []
         )
@@ -131,7 +135,9 @@ class TeamTests(PostgreSQLTestCase):
         roster = self.client.get(
             f"/teams/{team_id}/members", headers=self.alice_headers
         ).json()
-        self.assertEqual([member["user_id"] for member in roster], [self.alice, self.bob])
+        self.assertEqual(
+            [member["user_id"] for member in roster], [self.alice, self.bob]
+        )
 
     def test_outsiders_cannot_discover_or_modify_another_teams_roster(self) -> None:
         team_id = self.create_team()["id"]
@@ -151,7 +157,11 @@ class TeamTests(PostgreSQLTestCase):
                 ]
                 for response in responses:
                     self.assertEqual(response.status_code, 404, response.text)
-                self.assertTrue(all(response.json() == responses[0].json() for response in responses))
+                self.assertTrue(
+                    all(
+                        response.json() == responses[0].json() for response in responses
+                    )
+                )
         roster = self.client.get(
             f"/teams/{team_id}/members", headers=self.alice_headers
         ).json()
@@ -168,10 +178,14 @@ class TeamTests(PostgreSQLTestCase):
         self.assertEqual(removed.content, b"")
         self.assertEqual(self.client.get("/teams", headers=self.bob_headers).json(), [])
         self.assertEqual(
-            self.client.get(f"/teams/{team_id}/members", headers=self.bob_headers).status_code,
+            self.client.get(
+                f"/teams/{team_id}/members", headers=self.bob_headers
+            ).status_code,
             404,
         )
-        self.assertEqual(self.add_member(team_id, self.carol, self.bob_headers).status_code, 404)
+        self.assertEqual(
+            self.add_member(team_id, self.carol, self.bob_headers).status_code, 404
+        )
         repeated = self.client.delete(
             f"/teams/{team_id}/members/{self.bob}", headers=self.alice_headers
         )
@@ -198,7 +212,9 @@ class TeamTests(PostgreSQLTestCase):
             ).all()
         self.assertEqual(roles, ["owner", "owner"])
 
-    def test_duplicate_and_unknown_members_fail_without_membership_changes(self) -> None:
+    def test_duplicate_and_unknown_members_fail_without_membership_changes(
+        self,
+    ) -> None:
         team_id = self.create_team()["id"]
         first = self.add_member(team_id, self.bob)
         self.assertEqual(first.status_code, 201, first.text)
@@ -219,11 +235,15 @@ class TeamTests(PostgreSQLTestCase):
         for headers in ({}, {"Authorization": "Bearer unknown-token"}):
             with self.subTest(headers=headers):
                 responses = [
-                    self.client.post("/teams", json={"name": "Unauthorized"}, headers=headers),
+                    self.client.post(
+                        "/teams", json={"name": "Unauthorized"}, headers=headers
+                    ),
                     self.client.get("/teams", headers=headers),
                     self.client.get(f"/teams/{team_id}/members", headers=headers),
                     self.client.post(
-                        f"/teams/{team_id}/members", json={"user_id": self.bob}, headers=headers
+                        f"/teams/{team_id}/members",
+                        json={"user_id": self.bob},
+                        headers=headers,
                     ),
                     self.client.delete(
                         f"/teams/{team_id}/members/{self.alice}", headers=headers
@@ -242,31 +262,58 @@ class TeamTests(PostgreSQLTestCase):
             session.execute(
                 update(AuthSession)
                 .where(AuthSession.user_id == self.bob)
-                .values(created_at=now - timedelta(hours=2), expires_at=now - timedelta(hours=1))
+                .values(
+                    created_at=now - timedelta(hours=2),
+                    expires_at=now - timedelta(hours=1),
+                )
             )
         for headers in (self.alice_headers, self.bob_headers):
-            self.assertEqual(self.client.get("/teams", headers=headers).status_code, 401)
+            self.assertEqual(
+                self.client.get("/teams", headers=headers).status_code, 401
+            )
             self.assertEqual(
                 self.client.post(
-                    f"/teams/{team_id}/members", json={"user_id": self.carol}, headers=headers
+                    f"/teams/{team_id}/members",
+                    json={"user_id": self.carol},
+                    headers=headers,
                 ).status_code,
                 401,
             )
 
     def test_team_and_member_input_validation_preserves_data(self) -> None:
-        for payload in ({}, {"name": " \t\n "}, {"name": "x" * 101},
-                        {"name": None}, {"name": 123}, {"name": "Valid", "role": "owner"}):
-            with self.subTest(payload=payload):
-                response = self.client.post("/teams", json=payload, headers=self.alice_headers)
-                self.assertEqual(response.status_code, 422, response.text)
-        self.assertEqual(self.client.get("/teams", headers=self.alice_headers).json(), [])
-        team_id = self.create_team("x" * 100)["id"]
-        for payload in ({}, {"user_id": 0}, {"user_id": -1}, {"user_id": None},
-                        {"user_id": 1.5}, {"user_id": True}, {"user_id": str(self.bob)},
-                        {"user_id": 2**63}, {"user_id": self.bob, "role": "owner"}):
+        for payload in (
+            {},
+            {"name": " \t\n "},
+            {"name": "x" * 101},
+            {"name": None},
+            {"name": 123},
+            {"name": "Valid", "role": "owner"},
+        ):
             with self.subTest(payload=payload):
                 response = self.client.post(
-                    f"/teams/{team_id}/members", json=payload, headers=self.alice_headers
+                    "/teams", json=payload, headers=self.alice_headers
+                )
+                self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(
+            self.client.get("/teams", headers=self.alice_headers).json(), []
+        )
+        team_id = self.create_team("x" * 100)["id"]
+        for payload in (
+            {},
+            {"user_id": 0},
+            {"user_id": -1},
+            {"user_id": None},
+            {"user_id": 1.5},
+            {"user_id": True},
+            {"user_id": str(self.bob)},
+            {"user_id": 2**63},
+            {"user_id": self.bob, "role": "owner"},
+        ):
+            with self.subTest(payload=payload):
+                response = self.client.post(
+                    f"/teams/{team_id}/members",
+                    json=payload,
+                    headers=self.alice_headers,
                 )
                 self.assertEqual(response.status_code, 422, response.text)
         for bad_id in ("0", "-1", "invalid", str(2**63)):
@@ -289,7 +336,9 @@ class TeamTests(PostgreSQLTestCase):
         observed_team_counts: list[int | None] = []
 
         def reject_membership(
-            _mapper: Mapper[Membership], _connection: Connection, _membership: Membership
+            _mapper: Mapper[Membership],
+            _connection: Connection,
+            _membership: Membership,
         ) -> None:
             observed_team_counts.append(
                 _connection.scalar(select(func.count()).select_from(Team))
@@ -300,7 +349,9 @@ class TeamTests(PostgreSQLTestCase):
         try:
             with TestClient(app, raise_server_exceptions=False) as client:
                 response = client.post(
-                    "/teams", json={"name": "Should roll back"}, headers=self.alice_headers
+                    "/teams",
+                    json={"name": "Should roll back"},
+                    headers=self.alice_headers,
                 )
         finally:
             event.remove(Membership, "before_insert", reject_membership)
@@ -308,4 +359,96 @@ class TeamTests(PostgreSQLTestCase):
         self.assertEqual(observed_team_counts, [1])
         with get_session() as session:
             self.assertEqual(session.scalar(select(func.count()).select_from(Team)), 0)
-            self.assertEqual(session.scalar(select(func.count()).select_from(Membership)), 0)
+            self.assertEqual(
+                session.scalar(select(func.count()).select_from(Membership)), 0
+            )
+
+    def test_team_pagination_filters_membership_before_slicing(self) -> None:
+        expected: list[int] = []
+        with get_session() as session:
+            for index in range(55):
+                for owner in (self.bob, self.alice):
+                    team = Team(name=f"Team {index}")
+                    session.add(team)
+                    session.flush()
+                    session.add(
+                        Membership(team_id=team.id, user_id=owner, role="owner")
+                    )
+                    if owner == self.alice:
+                        expected.append(team.id)
+
+        for parameters, ids in (
+            ({}, expected[:50]),
+            ({"limit": 100}, expected),
+            ({"limit": 2, "offset": 1}, expected[1:3]),
+            ({"offset": 55}, []),
+            ({"offset": 2**63 - 1}, []),
+        ):
+            with self.subTest(parameters=parameters):
+                response = self.client.get(
+                    "/teams", params=parameters, headers=self.alice_headers
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual([team["id"] for team in response.json()], ids)
+                self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+
+    def test_roster_pagination_has_empty_pages_without_disclosing_teams(self) -> None:
+        team_id = self.create_team()["id"]
+        expected = [self.alice, self.bob, self.carol]
+        with get_session() as session:
+            session.add_all(
+                [
+                    Membership(team_id=team_id, user_id=user_id, role="member")
+                    for user_id in (self.bob, self.carol)
+                ]
+            )
+            for index in range(52):
+                user = User(
+                    email=f"member{index}@example.com",
+                    display_name=f"Member {index}",
+                    password_hash="unused-in-roster-tests",
+                )
+                session.add(user)
+                session.flush()
+                expected.append(user.id)
+                session.add(Membership(team_id=team_id, user_id=user.id, role="member"))
+        for parameters, ids in (
+            ({}, expected[:50]),
+            ({"limit": 100}, expected),
+            ({"limit": 2, "offset": 1}, expected[1:3]),
+            ({"offset": 55}, []),
+            ({"offset": 2**63 - 1}, []),
+        ):
+            with self.subTest(parameters=parameters):
+                response = self.client.get(
+                    f"/teams/{team_id}/members",
+                    params=parameters,
+                    headers=self.alice_headers,
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual([member["user_id"] for member in response.json()], ids)
+                self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+
+        _, outsider_headers = self.seed_account("Outsider")
+        for inaccessible_team in (team_id, 2**63 - 1):
+            response = self.client.get(
+                f"/teams/{inaccessible_team}/members",
+                params={"offset": 2**63 - 1},
+                headers=outsider_headers,
+            )
+            self.assertEqual(response.status_code, 404, response.text)
+            self.assertEqual(response.json(), {"detail": "Team not found"})
+
+    def test_team_and_roster_pagination_rejects_out_of_range_values(self) -> None:
+        team_id = self.create_team()["id"]
+        invalid_queries: list[dict[str, int | str]] = [
+            {"limit": value} for value in (0, -1, 101, "invalid")
+        ] + [{"offset": value} for value in (-1, 2**63, "invalid")]
+        for path in ("/teams", f"/teams/{team_id}/members"):
+            for parameters in invalid_queries:
+                with self.subTest(path=path, parameters=parameters):
+                    response = self.client.get(
+                        path, params=parameters, headers=self.alice_headers
+                    )
+                    self.assertEqual(response.status_code, 422, response.text)
+                    self.assertEqual(response.headers.get("Cache-Control"), "no-store")
