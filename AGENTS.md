@@ -27,15 +27,19 @@
 - Dockerfile builds the API image; Docker Compose runs the API and database.
 - The schema includes users, teams, memberships, notes, and authentication sessions.
 - Registration, login, current-user lookup, and logout are implemented under
-  `/auth`. Note creation, listing, and reading are implemented under `/notes`.
+  `/auth`. Note creation, listing, reading, updates, and deletion are implemented
+  under `/notes`.
 - Private notes are owner-only. Team-note access requires current membership,
   including for the original creator; membership removal revokes that access.
 - Team creation, listing, and membership routes are implemented under `/teams`.
   Only owners can add or remove members; all members can view their roster.
   Outsiders receive `404`. Create teams and owner memberships atomically; reject
   owner removal and client-supplied roles.
-- Note editing/deletion, search, and explicit sharing across teams are future
-  increments.
+- Note saves and deletes require the current positive `version`; stale writes
+  return `409`. Keep authorization checks and membership locks inside the write
+  transaction. Owners alone can mutate private notes; current team members can
+  mutate team notes. Preserve ownership and team assignment during saves.
+- Search and explicit sharing across teams are future increments.
 - Passwords use Argon2id; opaque bearer tokens are stored only as SHA-256 hashes.
   Sessions expire after one hour and logout revokes the current token.
 
@@ -92,6 +96,9 @@ expiry and revocation, public-user responses, and `Cache-Control: no-store`.
 Note changes should cover private-note isolation, current team membership,
 creator access after removal, authenticated ownership, validated input,
 pagination after access filtering, inaccessible-note `404`, and no-store headers.
+Versioned writes should cover stale-save rejection without data changes, stale
+deletes, concurrent saves, membership-removal races, and upgrading existing notes
+to version 1 without changing their content, ownership, or timestamps.
 
 Team changes should cover cross-team isolation, owner-only mutations, immediate
 revocation after removal, owner protection, and atomic team creation.

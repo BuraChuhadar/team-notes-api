@@ -91,6 +91,7 @@ class Note(Base):
         CheckConstraint(
             func.length(func.btrim(column("title"))) > 0, name="notes_title_check"
         ),
+        CheckConstraint(column("version") > 0, name="notes_version_check"),
         Index("notes_owner_id_idx", "owner_id"),
         Index("notes_team_id_idx", "team_id"),
     )
@@ -104,6 +105,7 @@ class Note(Base):
     )
     title: Mapped[str] = mapped_column(Text)
     content: Mapped[str] = mapped_column(Text, server_default=literal(""))
+    version: Mapped[int] = mapped_column(BigInteger, server_default=literal(1))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.current_timestamp()
     )

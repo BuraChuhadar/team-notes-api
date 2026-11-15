@@ -65,10 +65,11 @@ class NoteTests(PostgreSQLTestCase):
         content = "  # Meeting notes\n\nKeep whitespace and Unicode: café.  "
         response = self.create_note(title="  Meeting notes  ", content=content)
         note = response.json()
-        self.assertEqual(set(note), {"id", "owner_id", "team_id", "title", "content", "created_at", "updated_at"})
+        self.assertEqual(set(note), {"id", "owner_id", "team_id", "title", "content", "created_at", "updated_at", "version"})
         self.assertEqual(note["owner_id"], self.users["alice"])
         self.assertIsNone(note["team_id"])
         self.assertEqual(note["title"], "Meeting notes")
+        self.assertEqual(note["version"], 1)
         self.assertEqual(note["content"], content)
         self.assertEqual(note["created_at"], note["updated_at"])
         self.assertEqual(response.headers.get("Location"), f"/notes/{note['id']}")

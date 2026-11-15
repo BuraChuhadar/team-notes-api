@@ -2,10 +2,10 @@
 
 A FastAPI REST service for a note-taking product shared across teams.
 
-The service includes authentication, team and membership management, note creation
-and reading, a health endpoint, and PostgreSQL persistence with versioned
-migrations. Notes can be private or scoped to an existing team membership. Note
-editing and deletion will follow in small, reviewable steps.
+The service includes authentication, team and membership management, note CRUD,
+a health endpoint, and PostgreSQL persistence with versioned migrations. Notes
+can be private or scoped to an existing team membership. Updates and deletion
+use note versions to detect conflicting saves.
 
 ## Run locally
 
@@ -44,6 +44,8 @@ Expected: HTTP `200 OK` with `{"status":"ok"}`.
 | POST | `/notes` | Create a private or team note |
 | GET | `/notes` | List notes visible to the authenticated user |
 | GET | `/notes/{id}` | Read a visible note |
+| PUT | `/notes/{id}` | Save a note using its current version |
+| DELETE | `/notes/{id}?version={version}` | Delete a note using its current version |
 
 The health endpoint reports process liveness; it does not query the database.
 
@@ -100,7 +102,7 @@ curl -i 'http://127.0.0.1:8000/notes?limit=50&offset=0' \
 ```
 
 Creation returns `201`, a `Location: /notes/{id}` header, and the note's `id`,
-`owner_id`, `team_id`, `title`, `content`, `created_at`, and `updated_at`. Copy the
+`owner_id`, `team_id`, `title`, `content`, `created_at`, `updated_at`, and `version`. Copy the
 returned `id` into `NOTE_ID` to read that note:
 
 ```sh
@@ -128,8 +130,52 @@ notes for teams they currently belong to. `limit` defaults to 50 and accepts
 inaccessible note returns the same `404` response. Note responses use
 `Cache-Control: no-store`.
 
-This increment does not include editing, deletion, search, explicit sharing
-across teams.
+Search and explicit sharing across teams are later increments.
+
+### Update and delete notes
+
+Every new and existing note starts at `version: 1`. Use the version from the
+latest read when saving. `PUT /notes/{id}` requires exactly `title`, `content`,
+and `version`; it replaces the title and content and returns the full saved note.
+Titles and content follow the same validation rules as creation, and `version`
+must be a positive integer. Both fields are required, including `content: ""`
+when clearing a note. Note ownership, team, and creation time are preserved.
+
+```sh
+NOTE_VERSION=1 # Use the version returned by the latest read.
+curl -i -X PUT "http://127.0.0.1:8000/notes/$NOTE_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"title\":\"Meeting notes\",\"content\":\"Agreed next steps.\",\"version\":$NOTE_VERSION}"
+```
+
+A successful save returns `200`, increments `version` by one, and updates
+`updated_at`. If two users save version 1, one succeeds with version 2 and the
+other receives `409`; the rejected save leaves the stored note unchanged. Read
+the latest note and reconcile changes before retrying. Versions remain within
+the positive PostgreSQL BIGINT range; an exhausted version cannot be incremented.
+
+Set `NOTE_VERSION` to the version returned by the latest read or save before
+deleting:
+
+```sh
+NOTE_VERSION=2 # Replace with the note's current version.
+curl -i -X DELETE "http://127.0.0.1:8000/notes/$NOTE_ID?version=$NOTE_VERSION" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Deletion requires a matching version and returns an empty `204`. A stale version
+returns `409` and preserves the note. A missing version or invalid input returns
+`422`. A deleted or inaccessible note returns `404` on subsequent requests.
+
+Private notes can be edited or deleted only by their owner. Any current member
+of a note's team can edit or delete it, including notes created by another member.
+Removing membership also revokes write access for the note's original creator.
+Authorization is checked before reporting a version conflict, so outsiders get
+the same `404` as for missing notes. Writes hold the note and membership locks
+until the transaction commits, preserving these checks during concurrent saves
+and membership removal. All note responses, including errors, use
+`Cache-Control: no-store`.
 
 ### Teams and membership
 
@@ -371,17 +417,21 @@ These decisions describe implemented behavior; planned extensions are below.
    expire after one hour and logout revokes them immediately. This avoids JWT
    signing-key management and delayed revocation, at the cost of a database lookup
    for each authenticated request and password-hashing work during login.
-3. **Membership-filtered note queries.** Private-note access checks ownership;
+3. **Membership-filtered queries and versioned writes.** Private-note access checks ownership;
    team-note access checks current membership, including for the original
    creator. This makes membership removal take effect on subsequent reads without
    copying access lists onto each note. Filtering also happens before pagination,
    and missing and inaccessible notes share a `404` response. The tradeoff is more
    involved queries and a membership lookup for team access; these are covered by
-   API tests against isolated PostgreSQL schemas.
+   API tests against isolated PostgreSQL schemas. Saves and deletes lock the note,
+   require the caller's current version, and check current membership in the same
+   transaction. Conflicting saves return `409` instead of overwriting another
+   writer's changes. Clients must reload and reconcile conflicts; this provides
+   safe shared saves without simultaneous character-level editing.
 
 ## What I would change, add, or stop with more time
 
-The planned core still includes note editing and deletion.
+The planned core still includes explicit team sharing and search.
 Beyond that core, I would prioritize:
 
 - **Change:** Tune connection-pool sizing and indexes when measured traffic and

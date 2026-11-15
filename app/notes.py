@@ -1,11 +1,12 @@
-"""Create and read personal or team notes using current team membership."""
+"""Personal and team notes with current access checks and versioned writes."""
 
 from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.auth import UserResponse, get_current_user
@@ -16,13 +17,17 @@ router = APIRouter(prefix="/notes", tags=["notes"])
 MAX_BIGINT = 2**63 - 1
 
 
-def visible_to(user_id: int) -> ColumnElement[bool]:
+def writable_to(user_id: int) -> ColumnElement[bool]:
     membership_exists = (
         select(Membership.team_id)
         .where(Membership.team_id == Note.team_id, Membership.user_id == user_id)
         .exists()
     )
     return or_(and_(Note.team_id.is_(None), Note.owner_id == user_id), membership_exists)
+
+
+def visible_to(user_id: int) -> ColumnElement[bool]:
+    return writable_to(user_id)
 
 
 class NoteCreate(BaseModel):
@@ -35,6 +40,16 @@ class NoteCreate(BaseModel):
     team_id: Annotated[int, Field(strict=True, gt=0, le=MAX_BIGINT)] | None = None
 
 
+class NoteUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    title: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)
+    ]
+    content: str = Field(max_length=100_000)
+    version: Annotated[int, Field(strict=True, gt=0, le=MAX_BIGINT)]
+
+
 class NoteResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -45,6 +60,7 @@ class NoteResponse(BaseModel):
     content: str
     created_at: datetime
     updated_at: datetime
+    version: int
 
 
 @router.post("", response_model=NoteResponse, status_code=201)
@@ -105,3 +121,59 @@ def get_note(
         if note is None:
             raise HTTPException(status_code=404, detail="Note not found")
         return NoteResponse.model_validate(note)
+
+
+def note_for_write(
+    session: Session, note_id: int, user_id: int, expected_version: int
+) -> Note:
+    # Lock the note before checking its version so concurrent saves serialize.
+    note = session.scalar(
+        select(Note)
+        .where(Note.id == note_id, writable_to(user_id))
+        .with_for_update(of=Note)
+    )
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    if note.team_id is not None:
+        # Recheck and hold membership through the write: removal may have
+        # committed while this request waited for the note lock.
+        membership = session.scalar(
+            select(Membership.user_id)
+            .where(Membership.team_id == note.team_id, Membership.user_id == user_id)
+            .with_for_update(read=True)
+        )
+        if membership is None:
+            raise HTTPException(status_code=404, detail="Note not found")
+    if note.version != expected_version:
+        raise HTTPException(status_code=409, detail="Note version conflict; reload and retry")
+    return note
+
+
+@router.put("/{note_id}", response_model=NoteResponse)
+def update_note(
+    note_id: Annotated[int, Path(gt=0, le=MAX_BIGINT)],
+    payload: NoteUpdate,
+    user: Annotated[UserResponse, Depends(get_current_user)],
+) -> NoteResponse:
+    with get_session() as session:
+        note = note_for_write(session, note_id, user.id, payload.version)
+        if note.version == MAX_BIGINT:
+            raise HTTPException(status_code=409, detail="Note version limit reached")
+        note.title = payload.title
+        note.content = payload.content
+        note.version += 1
+        note.updated_at = session.execute(select(func.clock_timestamp())).scalar_one()
+        session.flush()
+        return NoteResponse.model_validate(note)
+
+
+@router.delete("/{note_id}", status_code=204, response_class=Response)
+def delete_note(
+    note_id: Annotated[int, Path(gt=0, le=MAX_BIGINT)],
+    version: Annotated[int, Query(gt=0, le=MAX_BIGINT)],
+    user: Annotated[UserResponse, Depends(get_current_user)],
+) -> Response:
+    with get_session() as session:
+        note = note_for_write(session, note_id, user.id, version)
+        session.delete(note)
+    return Response(status_code=204)
