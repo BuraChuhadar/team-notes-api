@@ -165,7 +165,7 @@ async def prevent_private_caching(
     ),
     responses=api_responses(private=False),
 )
-def health() -> HealthResponse:
+async def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 

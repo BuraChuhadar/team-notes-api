@@ -1,13 +1,62 @@
+import asyncio
 import os
 import socket
+import threading
 import unittest
 from unittest.mock import patch
 
+import anyio.to_thread
+import httpx2
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import ProgrammingError, TimeoutError as PoolTimeout
 
 from app.main import app
 from app.database import get_engine
+
+
+class HealthCapacityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_liveness_responds_while_database_worker_capacity_is_exhausted(self) -> None:
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        original_capacity = limiter.total_tokens
+        limiter.total_tokens = 1
+        started = threading.Event()
+        release = threading.Event()
+
+        def stalled_database(*_args: object) -> None:
+            started.set()
+            release.wait(timeout=5)
+            raise HTTPException(status_code=503, detail="Simulated database stall")
+
+        transport = httpx2.ASGITransport(app=app, raise_app_exceptions=False)
+        try:
+            async with httpx2.AsyncClient(
+                transport=transport, base_url="http://audit"
+            ) as client:
+                with patch("app.auth.try_consume_login_attempt", side_effect=stalled_database):
+                    login = asyncio.create_task(client.post(
+                        "/auth/login",
+                        json={"email": "reader@example.com", "password": "valid-passphrase"},
+                    ))
+                    health = None
+                    try:
+                        self.assertTrue(await asyncio.to_thread(started.wait, 2))
+                        self.assertEqual(limiter.borrowed_tokens, 1)
+                        health = asyncio.create_task(client.get("/health"))
+                        response = await asyncio.wait_for(asyncio.shield(health), timeout=1)
+                        self.assertEqual(response.status_code, 200, response.text)
+                        self.assertEqual(response.json(), {"status": "ok"})
+                        self.assertFalse(release.is_set())
+                    finally:
+                        release.set()
+                        await asyncio.gather(
+                            login, *([health] if health is not None else []),
+                            return_exceptions=True,
+                        )
+                    self.assertEqual(login.result().status_code, 503)
+        finally:
+            release.set()
+            limiter.total_tokens = original_capacity
 
 
 class OperationalEndpointTests(unittest.TestCase):
