@@ -653,6 +653,11 @@ backup retention/encryption, and managed failover procedures.
 
 ## Verify
 
+The implementation baseline verified on November 15, 2026 (`920dc8e`) passed
+190 tests, including 34 focused migration checks, plus dependency validation,
+Ruff, Pyright, and deprecation checks. The existing laptop database also restarted
+successfully with unchanged note contents and row counts.
+
 Run dependency validation, linting, type checking, and the full test suite using
 Docker. No host Python installation, virtual environment, database creation, or
 environment-variable setup is required:

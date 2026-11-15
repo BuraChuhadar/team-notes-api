@@ -18,6 +18,9 @@
 
 ## Project
 
+- This is an development project with a one-command laptop setup and portable cloud
+  deployment. Keep capacity settings adjustable and distinguish measured laptop
+  results from production guarantees. Deployment details live in `deploy/README.md`.
 - Python 3.11+, FastAPI, SQLAlchemy 2.1, Alembic, PostgreSQL, and Psycopg 3.
 - Application entry point: `app.main:app`.
 - Database sessions: `app/database.py`; typed ORM models: `app/models.py`;
@@ -74,6 +77,11 @@ For host checks, run `python -m pip check`, `python -m ruff check app tests scri
 `python -m pyright`. Keep the shared Python 3.11 target and deprecated-API errors
 in `pyproject.toml`; fix warnings instead of suppressing them.
 
+Use `collections.abc.Generator` for synchronous context managers and
+`collections.abc.AsyncGenerator` for `@asynccontextmanager`, with explicit type
+parameters supported by Python 3.11. Preserve the lifespan annotation
+`AsyncGenerator[None, None]` and the shared Pylance/Pyright configuration.
+
 ## Database changes
 
 - Keep initialization repeatable and preserve existing data.
@@ -93,6 +101,9 @@ in `pyproject.toml`; fix warnings instead of suppressing them.
   migration head before DDL. Legacy adoption must validate the claimed historical
   schema, handle an empty Alembic ledger, and reject contradictory histories.
   Preserve the archival legacy ledger and genuine historical constraint names.
+- Keep historical adoption and frozen schema signatures in `app/migration_compat.py`;
+  `app/database.py` remains the single transactional Alembic runner. Unknown
+  unversioned application tables require review rather than guessed stamping.
 - Keep schema migrations in Python Alembic revisions. Compatibility tests should
   reconstruct earlier schemas using those revisions, without separate `.sql` files.
 - Preserve any earlier local SQLite database files; importing their data is a
@@ -170,17 +181,38 @@ revocation after removal, owner protection, and atomic team creation.
 ## Production safeguards
 
 - Keep validated pool/timeout configuration in `app/config.py`; budget connections
-  across workers, replicas, rollout surge, and maintenance before increasing limits.
+  across workers, replicas, rollout surge, terminating pods, and maintenance before
+  increasing limits. The planned rollout budget is not a hard global connection cap.
 - Cloud API replicas use `AUTO_MIGRATE=false`; apply Python Alembic revisions with
   the separate migration role/job before readiness checks pass. Never provision
   cloud resources or publish credentials as part of local tests.
 - Preserve shared database login limits, safe 429/503 responses, and Retry-After.
   Trust forwarded client addresses only from the configured ingress boundary.
+- Registration, normal password verification, and dummy verification share the
+  nonblocking Argon2 admission gate in `app/security.py`. Preserve the hashing
+  parameters and `PASSWORD_HASH_CONCURRENCY` (default 2 per process, range 1–8).
+  Capacity exhaustion returns safe 503 with Retry-After. Budget about 64 MiB per
+  concurrent hash plus process overhead; workers multiply this memory use.
+- Keep `/health` independent of the database and `/ready` dependent on connectivity
+  and accepted schema revision. Preserve bounded cleanup with `SKIP LOCKED` and
+  active-session retention; expiration checks remain enforced before cleanup.
 - Keep cursor pagination additive, permission-filtered, stable, and bound to the
   same caller/query. Query-plan diagnostics must report actual planner choices.
 - Trigram extension setup is fixed PostgreSQL infrastructure DDL in the Python
   migration; all application queries use SQLAlchemy and no `.sql` files are added.
+- Keep `pg_trgm` in the configured `DB_TRIGRAM_SCHEMA`, outside disposable app/test
+  schemas. Reuse its existing namespace; preserve the shared extension during
+  downgrades and test cleanup.
 - Keep metrics labels bounded and credential-free; protect cloud metrics scrapes.
+- Metrics are per process. Keep one worker per replica unless Prometheus
+  multiprocess collection is implemented; scrape each replica separately.
+- Backup tools must reject archive overwrite and same/nonempty restore targets.
+  Preserve URL-option validation, inherited libpq environment cleanup, and the
+  verified, pinned container/database identity check. Keep credentials out of CLI
+  arguments and restore archives transactionally with exit-on-error.
+- Validate load dataset bounds before provisioning Docker resources. Account for
+  every planned arrival, including scheduler stalls, so completed plus dropped
+  requests equals planned requests; report throttling and version conflicts.
 - Run load/backup recovery tools only on disposable datasets during verification.
   Report actual latency/errors/connections/locks and environment, never an invented
   production capacity. Preserve existing developer databases and cloud resources.
